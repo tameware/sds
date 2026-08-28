@@ -16,9 +16,9 @@ cd sds
 ```bash
 bazelisk test //:single_dummy_solver_test
 bazelisk run //:single_dummy_solver -- \
-  --known K98.3.. --known-seat S \
-  --dummy AJT.2.. --dummy-seat N \
-  --available Q76543.45.. --trump S
+  --known K98.3..A --known-seat S \
+  --dummy AJT.2..K --dummy-seat N \
+  --available Q765...234567 --trump S
 ```
 
 Void suits for mid-deal positions: `--north-void`, `--east-void`, `--south-void`,

@@ -302,64 +302,37 @@ TEST(SingleDummySolverTest, FourCardSpadePositionReportsMaximinPerLead)
   ASSERT_TRUE(eight_min.has_value());
   ASSERT_TRUE(heart_min.has_value());
 
-  // Low spade leads let West duck; opposition then places SQ to defeat either
-  // dummy high or dummy low before East plays.
+  // Low spade leads let West duck; opposition re-splitting then places SQ to
+  // defeat either dummy high or dummy low before East plays.
   EXPECT_EQ(*king_min, 2);
   EXPECT_EQ(*nine_min, 2);
   EXPECT_EQ(*eight_min, 2);
   EXPECT_EQ(*heart_min, 3);
   EXPECT_EQ(result.maximin_value, 3);
-  EXPECT_TRUE(std::find(
-                  result.maximin_cards.begin(),
-                  result.maximin_cards.end(),
-                  card("H3"))
-              != result.maximin_cards.end());
-  EXPECT_TRUE(std::find(
-                  result.maximin_cards.begin(),
-                  result.maximin_cards.end(),
-                  card("S9"))
-              == result.maximin_cards.end());
-  EXPECT_TRUE(std::find(
-                  result.maximin_cards.begin(),
-                  result.maximin_cards.end(),
-                  card("S8"))
-              == result.maximin_cards.end());
-  EXPECT_TRUE(std::find(
-                  result.maximin_cards.begin(),
-                  result.maximin_cards.end(),
-                  card("SK"))
-              == result.maximin_cards.end());
+  EXPECT_EQ(result.maximin_cards.size(), 1u);
+  EXPECT_EQ(result.maximin_cards.front(), card("H3"));
 }
 
-TEST(SingleDummySolverTest, UserExampleHeartLeadAloneGuaranteesThreeTricks)
+TEST(SingleDummySolverTest, FiveCardClubAceOnlyMaximinOnClubAceLead)
 {
-  // User example (4-card hands, spades trump):
-  //   South (lead): K98.3..     North (dummy): AJT.2..
-  //   Unseen pool: Q76543.45..
-  //
-  // After a low spade lead West can duck; opposition repartitions SQ so that
-  // dummy's high or low spade fails. Only H3 guarantees three tricks.
   const auto result = solve_single_dummy(
-      parse_hand("K98.3.."),
-      parse_hand("AJT.2.."),
+      parse_hand("K98.3..A"),
+      parse_hand("AJT.2..K"),
       /*known_seat=*/2,
       /*dummy_seat=*/0,
       /*denomination=*/0,
-      parse_hand("Q76543.45.."));
+      parse_hand("Q765...234567"));
 
+  const auto club_ace_min = find_min(result, "CA");
+  const auto king_min = find_min(result, "SK");
   const auto heart_min = find_min(result, "H3");
+  ASSERT_TRUE(club_ace_min.has_value());
+  ASSERT_TRUE(king_min.has_value());
   ASSERT_TRUE(heart_min.has_value());
-  EXPECT_EQ(*heart_min, 3);
-  EXPECT_EQ(result.maximin_value, 3);
-  ASSERT_EQ(result.maximin_cards.size(), 1u);
-  EXPECT_EQ(result.maximin_cards.front(), card("H3"));
-
-  for (const char* spade_lead : {"SK", "S9", "S8"})
-  {
-    const auto spade_min = find_min(result, spade_lead);
-    ASSERT_TRUE(spade_min.has_value());
-    EXPECT_LT(*spade_min, *heart_min) << spade_lead;
-  }
+  EXPECT_EQ(*club_ace_min, 4);
+  EXPECT_EQ(result.maximin_value, 4);
+  EXPECT_LT(*king_min, *club_ace_min);
+  EXPECT_LT(*heart_min, *club_ace_min);
 }
 
 }  // namespace

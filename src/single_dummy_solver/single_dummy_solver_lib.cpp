@@ -283,6 +283,7 @@ auto apply_opponent_split(GameState state, const UnknownSplit& split) -> GameSta
 {
   state.hands[static_cast<std::size_t>(state.east_seat)] = split.first;
   state.hands[static_cast<std::size_t>(state.west_seat)] = split.second;
+  state.remaining_available.clear();
   std::sort(
       state.hands[static_cast<std::size_t>(state.east_seat)].begin(),
       state.hands[static_cast<std::size_t>(state.east_seat)].end());
@@ -292,13 +293,37 @@ auto apply_opponent_split(GameState state, const UnknownSplit& split) -> GameSta
   return state;
 }
 
+auto gather_opponent_cards(const GameState& state) -> std::vector<Card>
+{
+  const auto& east_hand = state.hands[static_cast<std::size_t>(state.east_seat)];
+  const auto& west_hand = state.hands[static_cast<std::size_t>(state.west_seat)];
+  std::vector<Card> cards;
+  if (!east_hand.empty() || !west_hand.empty())
+  {
+    // Opponents were dealt; unplayed cards live in their hands only.
+    cards.insert(cards.end(), east_hand.begin(), east_hand.end());
+    cards.insert(cards.end(), west_hand.begin(), west_hand.end());
+  }
+  else
+  {
+    cards = state.remaining_available;
+  }
+  std::sort(cards.begin(), cards.end());
+  return cards;
+}
+
 auto needs_adversarial_split(const GameState& state, int seat) -> bool
 {
-  if (state.remaining_available.empty())
+  if (state.east_slots + state.west_slots == 0)
   {
     return false;
   }
-  if (state.remaining_available.size()
+  const auto unknown = gather_opponent_cards(state);
+  if (unknown.empty())
+  {
+    return false;
+  }
+  if (unknown.size()
       != static_cast<std::size_t>(state.east_slots + state.west_slots))
   {
     return false;
@@ -307,7 +332,7 @@ auto needs_adversarial_split(const GameState& state, int seat) -> bool
   {
     return true;
   }
-  return state.hands[static_cast<std::size_t>(seat)].empty();
+  return false;
 }
 
 auto cards_eligible_for_seat(
@@ -325,15 +350,10 @@ auto cards_eligible_for_seat(
   return eligible;
 }
 
-auto mark_void_in_suit(GameState& state, int seat, int suit) -> void
-{
-  state.void_suits[static_cast<std::size_t>(seat)] |= 1 << suit;
-}
-
 auto adversarial_splits(const GameState& state) -> std::vector<UnknownSplit>
 {
   return enumerate_constrained_opponent_splits(
-      state.remaining_available,
+      gather_opponent_cards(state),
       /*east_hand_size=*/0,
       /*west_hand_size=*/0,
       state.east_slots,
@@ -412,14 +432,13 @@ auto apply_play(GameState state, const Card& card) -> GameState
   remove_card(state.hands[static_cast<std::size_t>(seat)], card);
   if (seat == state.east_seat || seat == state.west_seat)
   {
-    remove_card(state.remaining_available, card);
-  }
-  if (!state.trick.empty())
-  {
-    const int lead_suit = state.trick.front().card.suit;
-    if (card.suit != lead_suit)
+    const auto pool_it = std::find(
+        state.remaining_available.begin(),
+        state.remaining_available.end(),
+        card);
+    if (pool_it != state.remaining_available.end())
     {
-      mark_void_in_suit(state, seat, lead_suit);
+      state.remaining_available.erase(pool_it);
     }
   }
   state.trick.push_back(PlayedCard{seat, card});
@@ -792,16 +811,28 @@ auto solve_single_dummy(
   hands[static_cast<std::size_t>(dummy_seat)] = dummy;
   validate_seat_voids(hands, seat_void_suits);
 
-  const auto root_splits = enumerate_unknown_splits(
+  const auto [east_seat, west_seat] = opponent_seats(known_seat, dummy_seat);
+  const auto root_splits = enumerate_constrained_opponent_splits(
       available,
-      static_cast<int>(known.size()));
+      /*east_hand_size=*/0,
+      /*west_hand_size=*/0,
+      static_cast<int>(known.size()),
+      static_cast<int>(known.size()),
+      seat_void_suits[static_cast<std::size_t>(east_seat)],
+      seat_void_suits[static_cast<std::size_t>(west_seat)]);
+  if (root_splits.empty())
+  {
+    throw std::invalid_argument(
+        "no legal initial opposition split for available cards and void suits");
+  }
 
   std::map<Card, int> values;
-  EvaluationStats stats{};
   std::vector<std::map<Card, int>> matrix;
+  int total_opposition_splits = 0;
 
   for (const auto& lead_card : known)
   {
+    EvaluationStats stats{};
     auto state = make_initial_state(
         known,
         dummy,
@@ -823,14 +854,20 @@ auto solve_single_dummy(
       state.trick.clear();
     }
 
-    const int tricks = evaluate_recursive(state, stats);
+    int tricks = std::numeric_limits<int>::max();
+    for (const auto& split : root_splits)
+    {
+      const auto split_state = apply_opponent_split(state, split);
+      tricks = std::min(tricks, evaluate_recursive(split_state, stats));
+    }
+    total_opposition_splits += stats.opposition_split_evaluations;
     values[lead_card] = tricks;
     matrix.push_back({{lead_card, tricks}});
   }
 
   SingleDummyResult result{};
   result.combination_count = static_cast<int>(root_splits.size());
-  result.opposition_split_evaluations = stats.opposition_split_evaluations;
+  result.opposition_split_evaluations = total_opposition_splits;
   result.trick_matrix = std::move(matrix);
 
   auto ordered_known = known;
