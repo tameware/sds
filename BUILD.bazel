@@ -1,0 +1,117 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+load("@dds//:CPPVARIABLES.bzl", "DDS_CPPOPTS", "DDS_LINKOPTS", "DDS_LOCAL_DEFINES")
+
+config_setting(
+    name = "build_macos",
+    constraint_values = ["@platforms//os:osx"],
+)
+
+config_setting(
+    name = "debug_build_macos",
+    constraint_values = ["@platforms//os:osx"],
+    values = {"compilation_mode": "dbg"},
+)
+
+config_setting(
+    name = "build_linux",
+    constraint_values = ["@platforms//os:linux"],
+)
+
+config_setting(
+    name = "debug_build_linux",
+    constraint_values = ["@platforms//os:linux"],
+    values = {"compilation_mode": "dbg"},
+)
+
+config_setting(
+    name = "build_windows",
+    constraint_values = [
+        "@platforms//os:windows",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+config_setting(
+    name = "debug_build_windows",
+    constraint_values = [
+        "@platforms//os:windows",
+        "@platforms//cpu:x86_64",
+    ],
+    values = {"compilation_mode": "dbg"},
+)
+
+config_setting(
+    name = "debug_all",
+    define_values = {"debug_all": "true"},
+)
+
+config_setting(
+    name = "scheduler",
+    define_values = {"scheduler": "true"},
+)
+
+config_setting(
+    name = "ab_stats",
+    define_values = {"ab_stats": "true"},
+)
+
+config_setting(
+    name = "tt_reset_debug",
+    define_values = {"tt_reset_debug": "true"},
+)
+
+config_setting(
+    name = "build_wasm",
+    constraint_values = ["@platforms//cpu:wasm32"],
+)
+
+SDS_CPPOPTS = ["-std=c++20"] + DDS_CPPOPTS + select({
+    "//:build_windows": [],
+    "//:build_wasm": [],
+    "//:debug_build_windows": [],
+    "//conditions:default": ["-Wno-deprecated-declarations"],
+})
+
+SDS_LOCAL_DEFINES = DDS_LOCAL_DEFINES + select({
+    "//:build_windows": ["_CRT_SECURE_NO_WARNINGS"],
+    "//:debug_build_windows": ["_CRT_SECURE_NO_WARNINGS"],
+    "//conditions:default": [],
+})
+
+cc_library(
+    name = "single_dummy_solver_lib",
+    srcs = ["src/single_dummy_solver/single_dummy_solver_lib.cpp"],
+    hdrs = ["src/single_dummy_solver/single_dummy_solver.hpp"],
+    includes = ["src/single_dummy_solver"],
+    copts = SDS_CPPOPTS,
+    local_defines = SDS_LOCAL_DEFINES,
+    deps = ["@dds//library/src/api:api_definitions"],
+)
+
+cc_binary(
+    name = "single_dummy_solver",
+    srcs = ["src/single_dummy_solver/single_dummy_solver.cpp"],
+    copts = SDS_CPPOPTS,
+    linkopts = DDS_LINKOPTS,
+    local_defines = SDS_LOCAL_DEFINES,
+    deps = [
+        ":single_dummy_solver_lib",
+        "@dds//library/src:dds",
+        "@dds//library/src/api:api_definitions",
+    ],
+)
+
+cc_test(
+    name = "single_dummy_solver_test",
+    size = "medium",
+    timeout = "long",
+    srcs = ["tests/single_dummy_solver_test.cpp"],
+    copts = SDS_CPPOPTS,
+    local_defines = SDS_LOCAL_DEFINES,
+    deps = [
+        ":single_dummy_solver_lib",
+        "@dds//library/src:dds",
+        "@dds//library/src/api:api_definitions",
+        "@googletest//:gtest_main",
+    ],
+)
