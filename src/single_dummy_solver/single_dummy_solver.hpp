@@ -15,7 +15,7 @@
 #include <string_view>
 #include <vector>
 
-#include <api/dll.h>
+#include "bridge_types.hpp"
 
 namespace single_dummy_solver
 {
@@ -68,8 +68,8 @@ auto validate_position(
     const std::vector<Card>& available) -> void;
 
 auto validate_seat_voids(
-    const std::array<std::vector<Card>, DDS_HANDS>& hands,
-    const std::array<int, DDS_HANDS>& seat_void_suits) -> void;
+    const std::array<std::vector<Card>, kHands>& hands,
+    const std::array<int, kHands>& seat_void_suits) -> void;
 
 auto enumerate_unknown_splits(
     const std::vector<Card>& pool,
@@ -95,7 +95,7 @@ auto solve_single_dummy(
     int dummy_seat,
     int denomination,
     const std::vector<Card>& available,
-    std::array<int, DDS_HANDS> seat_void_suits = {}) -> SingleDummyResult;
+    std::array<int, kHands> seat_void_suits = {}) -> SingleDummyResult;
 
 auto format_result(const SingleDummyResult& result) -> std::string;
 

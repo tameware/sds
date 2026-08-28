@@ -15,17 +15,20 @@
 #include <string>
 #include <vector>
 
-#include <api/dll.h>
 #include "single_dummy_solver.hpp"
 
 namespace
 {
 
 using single_dummy_solver::Card;
+using single_dummy_solver::FutureTricks;
 using single_dummy_solver::SingleDummyResult;
 using single_dummy_solver::card_scores_from_future_tricks;
 using single_dummy_solver::enumerate_constrained_opponent_splits;
 using single_dummy_solver::enumerate_unknown_splits;
+using single_dummy_solver::kHands;
+using single_dummy_solver::kRankBitmaskQueen;
+using single_dummy_solver::kRankBitmaskSix;
 using single_dummy_solver::parse_card;
 using single_dummy_solver::parse_denomination;
 using single_dummy_solver::parse_hand;
@@ -54,16 +57,7 @@ auto find_min(const SingleDummyResult& result, std::string_view text)
   return std::nullopt;
 }
 
-class SingleDummySolverTest : public ::testing::Test
-{
-protected:
-  void SetUp() override
-  {
-    InitializeStaticMemory();
-  }
-};
-
-TEST_F(SingleDummySolverTest, ParseHandAcceptsPbnStyleSuits)
+TEST(SingleDummySolverTest, ParseHandAcceptsPbnStyleSuits)
 {
   const auto hand = parse_hand("AJ32.K..");
   ASSERT_EQ(hand.size(), 5u);
@@ -74,12 +68,12 @@ TEST_F(SingleDummySolverTest, ParseHandAcceptsPbnStyleSuits)
   EXPECT_EQ(hand[4], card("HK"));
 }
 
-TEST_F(SingleDummySolverTest, ParseHandRejectsWrongSuitCount)
+TEST(SingleDummySolverTest, ParseHandRejectsWrongSuitCount)
 {
   EXPECT_THROW(parse_hand("AKQ.JT9"), std::invalid_argument);
 }
 
-TEST_F(SingleDummySolverTest, ParseDenominationAndSeat)
+TEST(SingleDummySolverTest, ParseDenominationAndSeat)
 {
   EXPECT_EQ(parse_denomination("NT"), 4);
   EXPECT_EQ(parse_denomination("S"), 0);
@@ -90,7 +84,7 @@ TEST_F(SingleDummySolverTest, ParseDenominationAndSeat)
   EXPECT_THROW(parse_seat("X"), std::invalid_argument);
 }
 
-TEST_F(SingleDummySolverTest, FourCardPoolYieldsSeventySplits)
+TEST(SingleDummySolverTest, FourCardPoolYieldsSeventySplits)
 {
   const auto pool = parse_hand("QJT9.QJT9..");
   ASSERT_EQ(pool.size(), 8u);
@@ -113,7 +107,7 @@ TEST_F(SingleDummySolverTest, FourCardPoolYieldsSeventySplits)
   }
 }
 
-TEST_F(SingleDummySolverTest, ExpandsEqualsBitmaskOntoLeadCards)
+TEST(SingleDummySolverTest, ExpandsEqualsBitmaskOntoLeadCards)
 {
   const std::vector<Card> lead = {
       card("SK"), card("SQ"), card("S7"), card("S6")};
@@ -122,11 +116,11 @@ TEST_F(SingleDummySolverTest, ExpandsEqualsBitmaskOntoLeadCards)
   fut.cards = 2;
   fut.suit[0] = 0;
   fut.rank[0] = 13;
-  fut.equals[0] = static_cast<int>(bit_map_rank[12]) << 2;  // queen
+  fut.equals[0] = static_cast<int>(kRankBitmaskQueen) << 2;
   fut.score[0] = 3;
   fut.suit[1] = 0;
   fut.rank[1] = 7;
-  fut.equals[1] = static_cast<int>(bit_map_rank[6]) << 2;  // six
+  fut.equals[1] = static_cast<int>(kRankBitmaskSix) << 2;
   fut.score[1] = 1;
 
   const auto scores = card_scores_from_future_tricks(fut, lead);
@@ -137,7 +131,7 @@ TEST_F(SingleDummySolverTest, ExpandsEqualsBitmaskOntoLeadCards)
   EXPECT_EQ(scores.at(card("S6")), 1);
 }
 
-TEST_F(SingleDummySolverTest, ValidatePositionRejectsInvalidLayouts)
+TEST(SingleDummySolverTest, ValidatePositionRejectsInvalidLayouts)
 {
   const auto one = parse_hand("A...");
   const auto two = parse_hand("AK...");
@@ -164,7 +158,7 @@ TEST_F(SingleDummySolverTest, ValidatePositionRejectsInvalidLayouts)
       std::invalid_argument);
 }
 
-TEST_F(SingleDummySolverTest, ConstrainedSplitsRequireExactSlotCounts)
+TEST(SingleDummySolverTest, ConstrainedSplitsRequireExactSlotCounts)
 {
   const auto pool = parse_hand("Q.A..");
   const auto splits = enumerate_constrained_opponent_splits(
@@ -176,7 +170,7 @@ TEST_F(SingleDummySolverTest, ConstrainedSplitsRequireExactSlotCounts)
   EXPECT_EQ(splits.size(), 2u);
 }
 
-TEST_F(SingleDummySolverTest, ParseVoidSuitsAcceptsCommaOrRunTogether)
+TEST(SingleDummySolverTest, ParseVoidSuitsAcceptsCommaOrRunTogether)
 {
   EXPECT_EQ(parse_void_suits("S"), 1u << 0);
   EXPECT_EQ(parse_void_suits("s,h"), (1u << 0) | (1u << 1));
@@ -185,7 +179,7 @@ TEST_F(SingleDummySolverTest, ParseVoidSuitsAcceptsCommaOrRunTogether)
   EXPECT_THROW(parse_void_suits("X"), std::invalid_argument);
 }
 
-TEST_F(SingleDummySolverTest, InitialEastVoidSpadesAppliesToRepartitions)
+TEST(SingleDummySolverTest, InitialEastVoidSpadesAppliesToRepartitions)
 {
   const auto without_void = solve_single_dummy(
       parse_hand("A..."),
@@ -212,27 +206,27 @@ TEST_F(SingleDummySolverTest, InitialEastVoidSpadesAppliesToRepartitions)
       without_void.opposition_split_evaluations);
 }
 
-TEST_F(SingleDummySolverTest, ValidateSeatVoidsRejectsKnownHandInVoidSuit)
+TEST(SingleDummySolverTest, ValidateSeatVoidsRejectsKnownHandInVoidSuit)
 {
-  std::array<std::vector<Card>, DDS_HANDS> hands{};
+  std::array<std::vector<Card>, kHands> hands{};
   hands[2] = parse_hand("K98.3..");
   EXPECT_THROW(
       validate_seat_voids(hands, {0, 0, 1u << 0, 0}),
       std::invalid_argument);
 }
 
-TEST_F(SingleDummySolverTest, ValidateSeatVoidsRejectsDummyHandInVoidSuit)
+TEST(SingleDummySolverTest, ValidateSeatVoidsRejectsDummyHandInVoidSuit)
 {
-  std::array<std::vector<Card>, DDS_HANDS> hands{};
+  std::array<std::vector<Card>, kHands> hands{};
   hands[0] = parse_hand("AJT.2..");
   EXPECT_THROW(
       validate_seat_voids(hands, {1u << 1, 0, 0, 0}),
       std::invalid_argument);
 }
 
-TEST_F(SingleDummySolverTest, SouthVoidAcceptedWhenHandHasNoCardsInVoidSuit)
+TEST(SingleDummySolverTest, SouthVoidAcceptedWhenHandHasNoCardsInVoidSuit)
 {
-  std::array<int, DDS_HANDS> seat_void_suits{};
+  std::array<int, kHands> seat_void_suits{};
   seat_void_suits[2] = 1u << 3;  // South void clubs; hand has none
   const auto result = solve_single_dummy(
       parse_hand("K98.3.."),
@@ -245,7 +239,7 @@ TEST_F(SingleDummySolverTest, SouthVoidAcceptedWhenHandHasNoCardsInVoidSuit)
   EXPECT_EQ(result.maximin_value, 3);
 }
 
-TEST_F(SingleDummySolverTest, ConstrainedSplitsExcludeVoidSuits)
+TEST(SingleDummySolverTest, ConstrainedSplitsExcludeVoidSuits)
 {
   const auto pool = parse_hand("Q.A..");
   const auto splits = enumerate_constrained_opponent_splits(
@@ -261,7 +255,7 @@ TEST_F(SingleDummySolverTest, ConstrainedSplitsExcludeVoidSuits)
   EXPECT_EQ(splits[0].second.front(), card("SQ"));
 }
 
-TEST_F(SingleDummySolverTest, OneCardEndgameWinsTheOnlyTrickWhenLeadingAce)
+TEST(SingleDummySolverTest, OneCardEndgameWinsTheOnlyTrickWhenLeadingAce)
 {
   const auto result = solve_single_dummy(
       parse_hand("A..."),
@@ -277,7 +271,7 @@ TEST_F(SingleDummySolverTest, OneCardEndgameWinsTheOnlyTrickWhenLeadingAce)
   EXPECT_GT(result.opposition_split_evaluations, 0);
 }
 
-TEST_F(SingleDummySolverTest, FourCardSpadePositionReportsMaximinPerLead)
+TEST(SingleDummySolverTest, FourCardSpadePositionReportsMaximinPerLead)
 {
   // North (dummy): ♠AJT ♥2
   // South (lead):  ♠K98 ♥3
@@ -337,7 +331,7 @@ TEST_F(SingleDummySolverTest, FourCardSpadePositionReportsMaximinPerLead)
               == result.maximin_cards.end());
 }
 
-TEST_F(SingleDummySolverTest, UserExampleHeartLeadAloneGuaranteesThreeTricks)
+TEST(SingleDummySolverTest, UserExampleHeartLeadAloneGuaranteesThreeTricks)
 {
   // User example (4-card hands, spades trump):
   //   South (lead): K98.3..     North (dummy): AJT.2..

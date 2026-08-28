@@ -54,14 +54,14 @@ struct GameState
   int dummy_seat;
   int east_seat;
   int west_seat;
-  std::array<std::vector<Card>, DDS_HANDS> hands;
+  std::array<std::vector<Card>, kHands> hands;
   std::vector<Card> remaining_available;
   int leader;
   std::vector<PlayedCard> trick;
   int partnership_tricks;
   int east_slots;
   int west_slots;
-  std::array<int, DDS_HANDS> void_suits{};
+  std::array<int, kHands> void_suits{};
 };
 
 struct EvaluationStats
@@ -124,7 +124,7 @@ auto equals_lists_rank(int equals_holding, int rank) -> bool
 auto opponent_seats(int known_seat, int dummy_seat) -> std::pair<int, int>
 {
   std::vector<int> seats;
-  for (int seat = 0; seat < DDS_HANDS; ++seat)
+  for (int seat = 0; seat < kHands; ++seat)
   {
     if (seat != known_seat && seat != dummy_seat)
     {
@@ -189,7 +189,7 @@ auto card_to_string(const Card& card) -> std::string
 
 auto current_player(const GameState& state) -> int
 {
-  return (state.leader + static_cast<int>(state.trick.size())) % DDS_HANDS;
+  return (state.leader + static_cast<int>(state.trick.size())) % kHands;
 }
 
 auto all_hands_empty(const GameState& state) -> bool
@@ -266,7 +266,7 @@ auto trick_winner(
       }
     }
   }
-  return (leader + best) % DDS_HANDS;
+  return (leader + best) % kHands;
 }
 
 auto remove_card(std::vector<Card>& hand, const Card& card) -> void
@@ -452,7 +452,7 @@ auto make_initial_state(
     int dummy_seat,
     int denomination,
     const std::vector<Card>& available,
-    const std::array<int, DDS_HANDS>& seat_void_suits) -> GameState
+    const std::array<int, kHands>& seat_void_suits) -> GameState
 {
   const auto [east_seat, west_seat] = opponent_seats(known_seat, dummy_seat);
   GameState state{};
@@ -503,7 +503,7 @@ auto parse_hand(std::string_view text) -> std::vector<Card>
     const auto field = text.substr(
         start,
         dot == std::string_view::npos ? std::string_view::npos : dot - start);
-    if (suit >= DDS_SUITS)
+    if (suit >= kSuits)
     {
       throw std::invalid_argument("hand must have four suit fields separated by dots");
     }
@@ -518,7 +518,7 @@ auto parse_hand(std::string_view text) -> std::vector<Card>
     }
     start = dot + 1;
   }
-  if (suit != DDS_SUITS)
+  if (suit != kSuits)
   {
     throw std::invalid_argument("hand must have four suit fields separated by dots");
   }
@@ -598,8 +598,8 @@ auto validate_position(
     int dummy_seat,
     const std::vector<Card>& available) -> void
 {
-  if (known_seat < 0 || known_seat >= DDS_HANDS || dummy_seat < 0
-      || dummy_seat >= DDS_HANDS)
+  if (known_seat < 0 || known_seat >= kHands || dummy_seat < 0
+      || dummy_seat >= kHands)
   {
     throw std::invalid_argument("seats must be in 0..3");
   }
@@ -637,10 +637,10 @@ auto validate_position(
 }
 
 auto validate_seat_voids(
-    const std::array<std::vector<Card>, DDS_HANDS>& hands,
-    const std::array<int, DDS_HANDS>& seat_void_suits) -> void
+    const std::array<std::vector<Card>, kHands>& hands,
+    const std::array<int, kHands>& seat_void_suits) -> void
 {
-  for (int seat = 0; seat < DDS_HANDS; ++seat)
+  for (int seat = 0; seat < kHands; ++seat)
   {
     if (seat_void_suits[static_cast<std::size_t>(seat)] == 0)
     {
@@ -779,7 +779,7 @@ auto solve_single_dummy(
     int dummy_seat,
     int denomination,
     const std::vector<Card>& available,
-    std::array<int, DDS_HANDS> seat_void_suits) -> SingleDummyResult
+    std::array<int, kHands> seat_void_suits) -> SingleDummyResult
 {
   validate_position(known, dummy, known_seat, dummy_seat, available);
   if (denomination < 0 || denomination > 4)
@@ -787,7 +787,7 @@ auto solve_single_dummy(
     throw std::invalid_argument("denomination must be in 0..4");
   }
 
-  std::array<std::vector<Card>, DDS_HANDS> hands{};
+  std::array<std::vector<Card>, kHands> hands{};
   hands[static_cast<std::size_t>(known_seat)] = known;
   hands[static_cast<std::size_t>(dummy_seat)] = dummy;
   validate_seat_voids(hands, seat_void_suits);

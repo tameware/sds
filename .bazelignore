@@ -1,5 +1,3 @@
-# dds is a git submodule with its own MODULE.bazel and dependency graph.
-# The root workspace links it via @dds (local_repository in MODULE.bazel).
-# Ignore the subtree here so //... does not load dds BUILD files as main-repo
-# packages (they reference @rules_python and other deps only declared in dds/).
+# Optional vendored copy of dds-bridge/dds (not a Bazel dependency of SDS).
+# Ignore it so //... does not load its BUILD files as main-repo packages.
 dds

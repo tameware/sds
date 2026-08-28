@@ -12,7 +12,6 @@
 #include <iostream>
 #include <string>
 
-#include <api/dll.h>
 #include "single_dummy_solver.hpp"
 
 namespace
@@ -46,7 +45,7 @@ auto main(int argc, char* argv[]) -> int
   std::string known_seat_text;
   std::string dummy_seat_text;
   std::string denomination_text;
-  std::array<std::string, DDS_HANDS> void_text{};
+  std::array<std::string, single_dummy_solver::kHands> void_text{};
 
   for (int index = 1; index < argc; ++index)
   {
@@ -121,9 +120,8 @@ auto main(int argc, char* argv[]) -> int
 
   try
   {
-    InitializeStaticMemory();
-    std::array<int, DDS_HANDS> seat_void_suits{};
-    for (int seat = 0; seat < DDS_HANDS; ++seat)
+    std::array<int, single_dummy_solver::kHands> seat_void_suits{};
+    for (int seat = 0; seat < single_dummy_solver::kHands; ++seat)
     {
       seat_void_suits[static_cast<std::size_t>(seat)] =
           parse_optional_void(void_text[static_cast<std::size_t>(seat)]);
