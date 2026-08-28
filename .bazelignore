@@ -1,3 +1,0 @@
-# Optional vendored copy of dds-bridge/dds (not a Bazel dependency of SDS).
-# Ignore it so //... does not load its BUILD files as main-repo packages.
-dds
