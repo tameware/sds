@@ -46,6 +46,7 @@ struct SingleDummyResult
   std::vector<std::map<Card, int>> trick_matrix;
   int combination_count;
   int opposition_split_evaluations;
+  int alpha_beta_cutoffs;
   int maximin_value;
   std::vector<Card> maximin_cards;
 };

@@ -67,6 +67,7 @@ struct GameState
 struct EvaluationStats
 {
   int opposition_split_evaluations = 0;
+  int alpha_beta_cutoffs = 0;
   std::unordered_map<std::string, int> memo;
 };
 
@@ -362,11 +363,20 @@ auto adversarial_splits(const GameState& state) -> std::vector<UnknownSplit>
       state.void_suits[static_cast<std::size_t>(state.west_seat)]);
 }
 
-auto evaluate_recursive(GameState state, EvaluationStats& stats) -> int;
+auto evaluate_recursive(
+    GameState state,
+    EvaluationStats& stats,
+    int alpha,
+    int beta) -> int;
 
 auto apply_play(GameState state, const Card& card) -> GameState;
 
-auto evaluate_moves(GameState state, EvaluationStats& stats, bool maximize) -> int
+auto evaluate_moves(
+    GameState state,
+    EvaluationStats& stats,
+    bool maximize,
+    int alpha,
+    int beta) -> int
 {
   const int seat = current_player(state);
   const auto moves = legal_cards(state, seat);
@@ -379,13 +389,32 @@ auto evaluate_moves(GameState state, EvaluationStats& stats, bool maximize) -> i
                         : std::numeric_limits<int>::max();
   for (const auto& card : moves)
   {
-    const int value = evaluate_recursive(apply_play(state, card), stats);
-    result = maximize ? std::max(result, value) : std::min(result, value);
+    const int value =
+        evaluate_recursive(apply_play(state, card), stats, alpha, beta);
+    if (maximize)
+    {
+      result = std::max(result, value);
+      alpha = std::max(alpha, result);
+    }
+    else
+    {
+      result = std::min(result, value);
+      beta = std::min(beta, result);
+    }
+    if (alpha >= beta)
+    {
+      ++stats.alpha_beta_cutoffs;
+      break;
+    }
   }
   return result;
 }
 
-auto evaluate_recursive(GameState state, EvaluationStats& stats) -> int
+auto evaluate_recursive(
+    GameState state,
+    EvaluationStats& stats,
+    int alpha,
+    int beta) -> int
 {
   if (all_hands_empty(state) && state.trick.empty())
   {
@@ -414,14 +443,21 @@ auto evaluate_recursive(GameState state, EvaluationStats& stats) -> int
     {
       ++stats.opposition_split_evaluations;
       const auto split_state = apply_opponent_split(state, split);
-      const int value = evaluate_moves(split_state, stats, partnership);
+      const int value =
+          evaluate_moves(split_state, stats, partnership, alpha, beta);
       result = std::min(result, value);
+      beta = std::min(beta, result);
+      if (alpha >= beta)
+      {
+        ++stats.alpha_beta_cutoffs;
+        break;
+      }
     }
     stats.memo[key] = result;
     return result;
   }
 
-  const int result = evaluate_moves(state, stats, partnership);
+  const int result = evaluate_moves(state, stats, partnership, alpha, beta);
   stats.memo[key] = result;
   return result;
 }
@@ -829,6 +865,7 @@ auto solve_single_dummy(
   std::map<Card, int> values;
   std::vector<std::map<Card, int>> matrix;
   int total_opposition_splits = 0;
+  int total_alpha_beta_cutoffs = 0;
 
   for (const auto& lead_card : known)
   {
@@ -858,9 +895,16 @@ auto solve_single_dummy(
     for (const auto& split : root_splits)
     {
       const auto split_state = apply_opponent_split(state, split);
-      tricks = std::min(tricks, evaluate_recursive(split_state, stats));
+      tricks = std::min(
+          tricks,
+          evaluate_recursive(
+              split_state,
+              stats,
+              std::numeric_limits<int>::min(),
+              std::numeric_limits<int>::max()));
     }
     total_opposition_splits += stats.opposition_split_evaluations;
+    total_alpha_beta_cutoffs += stats.alpha_beta_cutoffs;
     values[lead_card] = tricks;
     matrix.push_back({{lead_card, tricks}});
   }
@@ -868,6 +912,7 @@ auto solve_single_dummy(
   SingleDummyResult result{};
   result.combination_count = static_cast<int>(root_splits.size());
   result.opposition_split_evaluations = total_opposition_splits;
+  result.alpha_beta_cutoffs = total_alpha_beta_cutoffs;
   result.trick_matrix = std::move(matrix);
 
   auto ordered_known = known;
@@ -898,6 +943,7 @@ auto format_result(const SingleDummyResult& result) -> std::string
   std::ostringstream out;
   out << "combinations: " << result.combination_count << '\n';
   out << "opposition_splits: " << result.opposition_split_evaluations << '\n';
+  out << "alpha_beta_cutoffs: " << result.alpha_beta_cutoffs << '\n';
   out << "maximin: " << result.maximin_value << " (";
   for (std::size_t index = 0; index < result.maximin_cards.size(); ++index)
   {
