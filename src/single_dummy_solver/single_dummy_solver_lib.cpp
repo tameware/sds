@@ -18,9 +18,10 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include "transposition_table.hpp"
 
 namespace single_dummy_solver
 {
@@ -62,6 +63,7 @@ struct GameState
   int east_slots;
   int west_slots;
   std::array<int, kHands> void_suits{};
+  std::array<int, kSuits> win_ranks{};
 };
 
 struct EvaluationStats
@@ -69,7 +71,7 @@ struct EvaluationStats
   int opposition_split_evaluations = 0;
   int alpha_beta_cutoffs = 0;
   int isomorphism_skipped_moves = 0;
-  std::unordered_map<std::string, int> memo;
+  TranspositionTable transposition_table;
 };
 
 constexpr int kRankBitmaskAll = 0x1FFF;
@@ -245,34 +247,29 @@ auto count_isomorphism_skipped(const GameState& state, int seat) -> int
   return static_cast<int>(full.size()) - static_cast<int>(distinct.size());
 }
 
-auto state_key(const GameState& state) -> std::string
+auto trick_cards_as_pairs(const GameState& state)
+    -> std::vector<std::pair<int, Card>>
 {
-  std::ostringstream key;
-  key << state.partnership_tricks << '|' << state.east_slots << '|' << state.west_slots;
-  for (const int void_mask : state.void_suits)
-  {
-    key << '|' << void_mask;
-  }
-  key << '|' << state.leader << '|' << state.trick.size();
+  std::vector<std::pair<int, Card>> trick;
+  trick.reserve(state.trick.size());
   for (const auto& played : state.trick)
   {
-    key << '|' << played.seat << ',' << played.card.suit << ','
-        << played.card.rank;
+    trick.emplace_back(played.seat, played.card);
   }
-  for (const auto& hand : state.hands)
-  {
-    key << '|';
-    for (const auto& card : hand)
-    {
-      key << card.suit << ',' << card.rank << ';';
-    }
-  }
-  key << '|';
-  for (const auto& card : state.remaining_available)
-  {
-    key << card.suit << ',' << card.rank << ';';
-  }
-  return key.str();
+  return trick;
+}
+
+auto transposition_position(const GameState& state) -> TranspositionPosition
+{
+  return build_transposition_position(
+      state.partnership_tricks,
+      state.east_slots,
+      state.west_slots,
+      state.leader,
+      state.hands,
+      trick_cards_as_pairs(state),
+      state.void_suits,
+      state.win_ranks);
 }
 
 auto char_to_rank(char ch) -> int
@@ -444,6 +441,55 @@ auto trick_winner(
   return (leader + best) % kHands;
 }
 
+auto winning_rank_mask_in_suit(int suit, int winning_rank, int aggregate) -> int
+{
+  int mask = 0;
+  for (int rank = winning_rank; rank <= 14; ++rank)
+  {
+    if ((aggregate & rank_bit(rank)) != 0)
+    {
+      mask |= rank_bit(rank);
+    }
+  }
+  return mask;
+}
+
+auto record_trick_win_ranks(GameState& state) -> void
+{
+  const int winner_index = [&]() {
+    const int winner_seat = trick_winner(state.trick, state.denomination, state.leader);
+    for (int index = 0; index < static_cast<int>(state.trick.size()); ++index)
+    {
+      const int seat = (state.leader + index) % kHands;
+      if (seat == winner_seat)
+      {
+        return index;
+      }
+    }
+    return 0;
+  }();
+
+  const auto& winning_card = state.trick[static_cast<std::size_t>(winner_index)].card;
+  const int lead_suit = state.trick.front().card.suit;
+  const bool trump_contract = state.denomination != 4;
+  const bool wins_by_trump =
+      trump_contract && winning_card.suit == state.denomination;
+  const bool wins_by_lead =
+      !wins_by_trump && winning_card.suit == lead_suit;
+
+  if (!wins_by_trump && !wins_by_lead)
+  {
+    return;
+  }
+
+  const int suit = winning_card.suit;
+  const int aggregate = held_mask_in_suit(state, suit);
+  state.win_ranks[static_cast<std::size_t>(suit)] |= winning_rank_mask_in_suit(
+      suit,
+      winning_card.rank,
+      aggregate);
+}
+
 auto remove_card(std::vector<Card>& hand, const Card& card) -> void
 {
   const auto it = std::find(hand.begin(), hand.end(), card);
@@ -596,10 +642,10 @@ auto evaluate_recursive(
     return state.partnership_tricks;
   }
 
-  const std::string key = state_key(state);
-  if (const auto cached = stats.memo.find(key); cached != stats.memo.end())
+  const auto position = transposition_position(state);
+  if (const auto cached = stats.transposition_table.lookup(position))
   {
-    return cached->second;
+    return *cached;
   }
 
   const int seat = current_player(state);
@@ -628,12 +674,12 @@ auto evaluate_recursive(
         break;
       }
     }
-    stats.memo[key] = result;
+    stats.transposition_table.store(transposition_position(state), result);
     return result;
   }
 
   const int result = evaluate_moves(state, stats, partnership, alpha, beta);
-  stats.memo[key] = result;
+  stats.transposition_table.store(transposition_position(state), result);
   return result;
 }
 
@@ -664,6 +710,7 @@ auto apply_play(GameState state, const Card& card) -> GameState
 
   if (state.trick.size() == 4)
   {
+    record_trick_win_ranks(state);
     const int winner = trick_winner(state.trick, state.denomination, state.leader);
     if (is_partnership_seat(winner, state.known_seat, state.dummy_seat))
     {
@@ -1049,6 +1096,7 @@ auto solve_single_dummy(
   int total_opposition_splits = 0;
   int total_alpha_beta_cutoffs = 0;
   int total_isomorphism_skipped = 0;
+  int total_transposition_hits = 0;
 
   for (const auto& lead_card : known)
   {
@@ -1089,6 +1137,7 @@ auto solve_single_dummy(
     total_opposition_splits += stats.opposition_split_evaluations;
     total_alpha_beta_cutoffs += stats.alpha_beta_cutoffs;
     total_isomorphism_skipped += stats.isomorphism_skipped_moves;
+    total_transposition_hits += stats.transposition_table.hits();
     values[lead_card] = tricks;
     matrix.push_back({{lead_card, tricks}});
   }
@@ -1098,6 +1147,7 @@ auto solve_single_dummy(
   result.opposition_split_evaluations = total_opposition_splits;
   result.alpha_beta_cutoffs = total_alpha_beta_cutoffs;
   result.isomorphism_skipped_moves = total_isomorphism_skipped;
+  result.transposition_hits = total_transposition_hits;
   result.trick_matrix = std::move(matrix);
 
   auto ordered_known = known;
@@ -1130,6 +1180,7 @@ auto format_result(const SingleDummyResult& result) -> std::string
   out << "opposition_splits: " << result.opposition_split_evaluations << '\n';
   out << "alpha_beta_cutoffs: " << result.alpha_beta_cutoffs << '\n';
   out << "isomorphism_skipped: " << result.isomorphism_skipped_moves << '\n';
+  out << "transposition_hits: " << result.transposition_hits << '\n';
   out << "maximin: " << result.maximin_value << " (";
   for (std::size_t index = 0; index < result.maximin_cards.size(); ++index)
   {

@@ -48,6 +48,7 @@ struct SingleDummyResult
   int opposition_split_evaluations;
   int alpha_beta_cutoffs;
   int isomorphism_skipped_moves;
+  int transposition_hits;
   int maximin_value;
   std::vector<Card> maximin_cards;
 };

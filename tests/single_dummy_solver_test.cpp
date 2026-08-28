@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "single_dummy_solver.hpp"
+#include "transposition_table.hpp"
 
 namespace
 {
@@ -23,6 +24,8 @@ namespace
 using single_dummy_solver::Card;
 using single_dummy_solver::FutureTricks;
 using single_dummy_solver::SingleDummyResult;
+using single_dummy_solver::TranspositionTable;
+using single_dummy_solver::build_transposition_position;
 using single_dummy_solver::card_scores_from_future_tricks;
 using single_dummy_solver::distinct_representative_ranks_in_suit;
 using single_dummy_solver::enumerate_constrained_opponent_splits;
@@ -312,6 +315,90 @@ TEST(SingleDummySolverTest, FourCardSpadePositionReportsMaximinPerLead)
   EXPECT_EQ(result.maximin_value, 3);
   EXPECT_EQ(result.maximin_cards.size(), 1u);
   EXPECT_EQ(result.maximin_cards.front(), card("H3"));
+}
+
+TEST(SingleDummySolverTest, RelativeSuitEncodingMatchesIsomorphicHoldings)
+{
+  std::array<std::vector<Card>, kHands> high_label{};
+  high_label[0] = {card("SA")};
+  high_label[1] = {card("S9")};
+  high_label[2] = {card("SQ")};
+  high_label[3] = {card("S7")};
+
+  std::array<std::vector<Card>, kHands> low_label{};
+  low_label[0] = {card("SK")};
+  low_label[1] = {card("S8")};
+  low_label[2] = {card("SJ")};
+  low_label[3] = {card("S6")};
+
+  const std::vector<std::pair<int, Card>> empty_trick;
+  std::array<int, kHands> voids{};
+  std::array<int, 4> win_ranks{};
+
+  const auto high_pos = build_transposition_position(
+      0, 1, 1, 2, high_label, empty_trick, voids, win_ranks);
+  const auto low_pos = build_transposition_position(
+      0, 1, 1, 2, low_label, empty_trick, voids, win_ranks);
+  EXPECT_EQ(high_pos.order_set, low_pos.order_set);
+}
+
+TEST(SingleDummySolverTest, TranspositionTableMatchesRelativePositions)
+{
+  std::array<std::vector<Card>, kHands> high_label{};
+  high_label[0] = {card("SA")};
+  high_label[1] = {card("S9")};
+  high_label[2] = {card("SQ")};
+  high_label[3] = {card("S7")};
+
+  std::array<std::vector<Card>, kHands> low_label{};
+  low_label[0] = {card("SK")};
+  low_label[1] = {card("S8")};
+  low_label[2] = {card("SJ")};
+  low_label[3] = {card("S6")};
+
+  const std::vector<std::pair<int, Card>> empty_trick;
+  std::array<int, kHands> voids{};
+  std::array<int, 4> win_ranks{};
+
+  const auto high_pos = build_transposition_position(
+      /*partnership_tricks=*/0,
+      /*east_slots=*/1,
+      /*west_slots=*/1,
+      /*leader=*/2,
+      high_label,
+      empty_trick,
+      voids,
+      win_ranks);
+  const auto low_pos = build_transposition_position(
+      /*partnership_tricks=*/0,
+      /*east_slots=*/1,
+      /*west_slots=*/1,
+      /*leader=*/2,
+      low_label,
+      empty_trick,
+      voids,
+      win_ranks);
+
+  TranspositionTable table;
+  table.store(high_pos, 7);
+  const auto lookup = table.lookup(low_pos);
+  ASSERT_TRUE(lookup.has_value());
+  EXPECT_EQ(*lookup, 7);
+  EXPECT_EQ(table.hits(), 1);
+}
+
+TEST(SingleDummySolverTest, TranspositionHitsDuringSolve)
+{
+  const auto result = solve_single_dummy(
+      parse_hand("K98.3.."),
+      parse_hand("AJT.2.."),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/0,
+      parse_hand("Q76543.45.."));
+
+  EXPECT_EQ(result.maximin_value, 3);
+  EXPECT_GT(result.transposition_hits, 0);
 }
 
 TEST(SingleDummySolverTest, DistinctRepresentativeRanksMergeWhenGapUnavailable)
