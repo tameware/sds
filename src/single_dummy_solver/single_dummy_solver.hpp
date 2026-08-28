@@ -47,6 +47,7 @@ struct SingleDummyResult
   int combination_count;
   int opposition_split_evaluations;
   int alpha_beta_cutoffs;
+  int isomorphism_skipped_moves;
   int maximin_value;
   std::vector<Card> maximin_cards;
 };
@@ -88,6 +89,10 @@ auto enumerate_constrained_opponent_splits(
 auto card_scores_from_future_tricks(
     const FutureTricks& fut,
     const std::vector<Card>& lead_cards) -> std::map<Card, int>;
+
+auto distinct_representative_ranks_in_suit(
+    int hand_mask,
+    int unavailable_mask) -> std::vector<int>;
 
 auto solve_single_dummy(
     const std::vector<Card>& known,

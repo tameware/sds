@@ -68,8 +68,182 @@ struct EvaluationStats
 {
   int opposition_split_evaluations = 0;
   int alpha_beta_cutoffs = 0;
+  int isomorphism_skipped_moves = 0;
   std::unordered_map<std::string, int> memo;
 };
+
+constexpr int kRankBitmaskAll = 0x1FFF;
+
+auto rank_bit(int rank) -> int
+{
+  return 1 << (rank - 2);
+}
+
+auto held_mask_in_suit(const GameState& state, int suit) -> int
+{
+  int mask = 0;
+  for (const auto& hand : state.hands)
+  {
+    for (const auto& card : hand)
+    {
+      if (card.suit == suit)
+      {
+        mask |= rank_bit(card.rank);
+      }
+    }
+  }
+  for (const auto& played : state.trick)
+  {
+    if (played.card.suit == suit)
+    {
+      mask |= rank_bit(played.card.rank);
+    }
+  }
+  return mask;
+}
+
+auto unavailable_mask_in_suit(const GameState& state, int suit) -> int
+{
+  return (~held_mask_in_suit(state, suit)) & kRankBitmaskAll;
+}
+
+struct SuitGroup
+{
+  int top_rank;
+  int gap;
+};
+
+auto suit_groups(int hand_mask) -> std::vector<SuitGroup>
+{
+  std::vector<SuitGroup> groups;
+  std::optional<int> above_bottom;
+  for (int top = 14; top >= 2;)
+  {
+    if ((hand_mask & rank_bit(top)) == 0)
+    {
+      --top;
+      continue;
+    }
+    int bottom = top;
+    while (bottom > 2 && (hand_mask & rank_bit(bottom - 1)) != 0)
+    {
+      --bottom;
+    }
+    int gap = 0;
+    if (above_bottom.has_value())
+    {
+      for (int rank = top + 1; rank <= *above_bottom - 1; ++rank)
+      {
+        gap |= rank_bit(rank);
+      }
+    }
+    groups.push_back(SuitGroup{top, gap});
+    above_bottom = bottom;
+    top = bottom - 1;
+  }
+  return groups;
+}
+
+auto representative_ranks_in_suit(
+    int hand_mask,
+    int unavailable_mask) -> std::vector<int>
+{
+  const auto groups = suit_groups(hand_mask);
+  std::vector<int> representatives;
+  for (std::size_t index = 0; index < groups.size();)
+  {
+    std::size_t merge_end = index;
+    while (merge_end + 1 < groups.size()
+           && (groups[merge_end + 1].gap & unavailable_mask)
+               == groups[merge_end + 1].gap)
+    {
+      ++merge_end;
+    }
+    representatives.push_back(groups[index].top_rank);
+    index = merge_end + 1;
+  }
+  return representatives;
+}
+
+auto hand_mask_in_suit(const std::vector<Card>& hand, int suit) -> int
+{
+  int mask = 0;
+  for (const auto& card : hand)
+  {
+    if (card.suit == suit)
+    {
+      mask |= rank_bit(card.rank);
+    }
+  }
+  return mask;
+}
+
+auto append_distinct_cards_in_suit(
+    const std::vector<Card>& hand,
+    int suit,
+    int unavailable_mask,
+    std::vector<Card>& moves) -> void
+{
+  const int hand_mask = hand_mask_in_suit(hand, suit);
+  if (hand_mask == 0)
+  {
+    return;
+  }
+  const auto ranks = representative_ranks_in_suit(hand_mask, unavailable_mask);
+  for (const int rank : ranks)
+  {
+    moves.push_back(Card{suit, rank});
+  }
+}
+
+auto distinct_legal_cards(const GameState& state, int seat) -> std::vector<Card>
+{
+  const auto& hand = state.hands[static_cast<std::size_t>(seat)];
+  if (hand.empty())
+  {
+    return {};
+  }
+  if (state.trick.empty())
+  {
+    std::vector<Card> moves;
+    for (int suit = 0; suit < kSuits; ++suit)
+    {
+      append_distinct_cards_in_suit(
+          hand, suit, unavailable_mask_in_suit(state, suit), moves);
+    }
+    return moves;
+  }
+
+  const int lead_suit = state.trick.front().card.suit;
+  const int lead_mask = hand_mask_in_suit(hand, lead_suit);
+  if (lead_mask != 0)
+  {
+    std::vector<Card> moves;
+    append_distinct_cards_in_suit(
+        hand,
+        lead_suit,
+        unavailable_mask_in_suit(state, lead_suit),
+        moves);
+    return moves;
+  }
+
+  std::vector<Card> moves;
+  for (int suit = 0; suit < kSuits; ++suit)
+  {
+    append_distinct_cards_in_suit(
+        hand, suit, unavailable_mask_in_suit(state, suit), moves);
+  }
+  return moves;
+}
+
+auto legal_cards(const GameState& state, int seat) -> std::vector<Card>;
+
+auto count_isomorphism_skipped(const GameState& state, int seat) -> int
+{
+  const auto full = legal_cards(state, seat);
+  const auto distinct = distinct_legal_cards(state, seat);
+  return static_cast<int>(full.size()) - static_cast<int>(distinct.size());
+}
 
 auto state_key(const GameState& state) -> std::string
 {
@@ -379,7 +553,8 @@ auto evaluate_moves(
     int beta) -> int
 {
   const int seat = current_player(state);
-  const auto moves = legal_cards(state, seat);
+  stats.isomorphism_skipped_moves += count_isomorphism_skipped(state, seat);
+  const auto moves = distinct_legal_cards(state, seat);
   if (moves.empty())
   {
     throw std::runtime_error("no legal cards for seat " + std::to_string(seat));
@@ -528,6 +703,13 @@ auto make_initial_state(
 }
 
 }  // namespace
+
+auto distinct_representative_ranks_in_suit(
+    int hand_mask,
+    int unavailable_mask) -> std::vector<int>
+{
+  return representative_ranks_in_suit(hand_mask, unavailable_mask);
+}
 
 auto parse_card(std::string_view text) -> Card
 {
@@ -866,6 +1048,7 @@ auto solve_single_dummy(
   std::vector<std::map<Card, int>> matrix;
   int total_opposition_splits = 0;
   int total_alpha_beta_cutoffs = 0;
+  int total_isomorphism_skipped = 0;
 
   for (const auto& lead_card : known)
   {
@@ -905,6 +1088,7 @@ auto solve_single_dummy(
     }
     total_opposition_splits += stats.opposition_split_evaluations;
     total_alpha_beta_cutoffs += stats.alpha_beta_cutoffs;
+    total_isomorphism_skipped += stats.isomorphism_skipped_moves;
     values[lead_card] = tricks;
     matrix.push_back({{lead_card, tricks}});
   }
@@ -913,6 +1097,7 @@ auto solve_single_dummy(
   result.combination_count = static_cast<int>(root_splits.size());
   result.opposition_split_evaluations = total_opposition_splits;
   result.alpha_beta_cutoffs = total_alpha_beta_cutoffs;
+  result.isomorphism_skipped_moves = total_isomorphism_skipped;
   result.trick_matrix = std::move(matrix);
 
   auto ordered_known = known;
@@ -944,6 +1129,7 @@ auto format_result(const SingleDummyResult& result) -> std::string
   out << "combinations: " << result.combination_count << '\n';
   out << "opposition_splits: " << result.opposition_split_evaluations << '\n';
   out << "alpha_beta_cutoffs: " << result.alpha_beta_cutoffs << '\n';
+  out << "isomorphism_skipped: " << result.isomorphism_skipped_moves << '\n';
   out << "maximin: " << result.maximin_value << " (";
   for (std::size_t index = 0; index < result.maximin_cards.size(); ++index)
   {

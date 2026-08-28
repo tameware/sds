@@ -24,6 +24,7 @@ using single_dummy_solver::Card;
 using single_dummy_solver::FutureTricks;
 using single_dummy_solver::SingleDummyResult;
 using single_dummy_solver::card_scores_from_future_tricks;
+using single_dummy_solver::distinct_representative_ranks_in_suit;
 using single_dummy_solver::enumerate_constrained_opponent_splits;
 using single_dummy_solver::enumerate_unknown_splits;
 using single_dummy_solver::kHands;
@@ -311,6 +312,43 @@ TEST(SingleDummySolverTest, FourCardSpadePositionReportsMaximinPerLead)
   EXPECT_EQ(result.maximin_value, 3);
   EXPECT_EQ(result.maximin_cards.size(), 1u);
   EXPECT_EQ(result.maximin_cards.front(), card("H3"));
+}
+
+TEST(SingleDummySolverTest, DistinctRepresentativeRanksMergeWhenGapUnavailable)
+{
+  // AQ with king unavailable (played or never dealt) -> only ace is distinct.
+  const int ace = 1 << 12;
+  const int queen = 1 << 10;
+  const int king = 1 << 11;
+  const auto reps = distinct_representative_ranks_in_suit(
+      ace | queen,
+      king);
+  ASSERT_EQ(reps.size(), 1u);
+  EXPECT_EQ(reps.front(), 14);
+}
+
+TEST(SingleDummySolverTest, DistinctRepresentativeRanksKeepSeparateTouchingCards)
+{
+  // AK stays one group; only ace is searched when leading the suit.
+  const int ace = 1 << 12;
+  const int king = 1 << 11;
+  const auto reps = distinct_representative_ranks_in_suit(ace | king, 0);
+  ASSERT_EQ(reps.size(), 1u);
+  EXPECT_EQ(reps.front(), 14);
+}
+
+TEST(SingleDummySolverTest, CardIsomorphismReducesSearchWithoutChangingResults)
+{
+  const auto result = solve_single_dummy(
+      parse_hand("K98.3.."),
+      parse_hand("AJT.2.."),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/0,
+      parse_hand("Q76543.45.."));
+
+  EXPECT_EQ(result.maximin_value, 3);
+  EXPECT_GT(result.isomorphism_skipped_moves, 0);
 }
 
 TEST(SingleDummySolverTest, AlphaBetaPrunesWithoutChangingResults)
