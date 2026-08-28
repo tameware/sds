@@ -71,6 +71,7 @@ struct EvaluationStats
   int opposition_split_evaluations = 0;
   int alpha_beta_cutoffs = 0;
   int isomorphism_skipped_moves = 0;
+  int transposition_skipped_inexact = 0;
   TranspositionTable transposition_table;
 };
 
@@ -596,7 +597,7 @@ auto evaluate_moves(
     EvaluationStats& stats,
     bool maximize,
     int alpha,
-    int beta) -> int
+    int beta) -> std::pair<int, bool>
 {
   const int seat = current_player(state);
   stats.isomorphism_skipped_moves += count_isomorphism_skipped(state, seat);
@@ -606,6 +607,7 @@ auto evaluate_moves(
     throw std::runtime_error("no legal cards for seat " + std::to_string(seat));
   }
 
+  bool exact = true;
   int result = maximize ? std::numeric_limits<int>::min()
                         : std::numeric_limits<int>::max();
   for (const auto& card : moves)
@@ -625,10 +627,11 @@ auto evaluate_moves(
     if (alpha >= beta)
     {
       ++stats.alpha_beta_cutoffs;
+      exact = false;
       break;
     }
   }
-  return result;
+  return {result, exact};
 }
 
 auto evaluate_recursive(
@@ -659,27 +662,45 @@ auto evaluate_recursive(
       throw std::invalid_argument(
           "no legal opposition split for remaining cards and void suits");
     }
+    bool exact = true;
     int result = std::numeric_limits<int>::max();
     for (const auto& split : splits)
     {
       ++stats.opposition_split_evaluations;
       const auto split_state = apply_opponent_split(state, split);
-      const int value =
+      const auto [value, move_exact] =
           evaluate_moves(split_state, stats, partnership, alpha, beta);
+      (void)move_exact;
       result = std::min(result, value);
       beta = std::min(beta, result);
       if (alpha >= beta)
       {
         ++stats.alpha_beta_cutoffs;
+        exact = false;
         break;
       }
     }
-    stats.transposition_table.store(transposition_position(state), result);
+    if (exact)
+    {
+      stats.transposition_table.store(transposition_position(state), result);
+    }
+    else
+    {
+      ++stats.transposition_skipped_inexact;
+    }
     return result;
   }
 
-  const int result = evaluate_moves(state, stats, partnership, alpha, beta);
-  stats.transposition_table.store(transposition_position(state), result);
+  const auto [result, exact] =
+      evaluate_moves(state, stats, partnership, alpha, beta);
+  if (exact)
+  {
+    stats.transposition_table.store(transposition_position(state), result);
+  }
+  else
+  {
+    ++stats.transposition_skipped_inexact;
+  }
   return result;
 }
 
@@ -1097,6 +1118,7 @@ auto solve_single_dummy(
   int total_alpha_beta_cutoffs = 0;
   int total_isomorphism_skipped = 0;
   int total_transposition_hits = 0;
+  int total_transposition_skipped_inexact = 0;
 
   for (const auto& lead_card : known)
   {
@@ -1138,6 +1160,7 @@ auto solve_single_dummy(
     total_alpha_beta_cutoffs += stats.alpha_beta_cutoffs;
     total_isomorphism_skipped += stats.isomorphism_skipped_moves;
     total_transposition_hits += stats.transposition_table.hits();
+    total_transposition_skipped_inexact += stats.transposition_skipped_inexact;
     values[lead_card] = tricks;
     matrix.push_back({{lead_card, tricks}});
   }
@@ -1148,6 +1171,7 @@ auto solve_single_dummy(
   result.alpha_beta_cutoffs = total_alpha_beta_cutoffs;
   result.isomorphism_skipped_moves = total_isomorphism_skipped;
   result.transposition_hits = total_transposition_hits;
+  result.transposition_skipped_inexact = total_transposition_skipped_inexact;
   result.trick_matrix = std::move(matrix);
 
   auto ordered_known = known;
@@ -1181,6 +1205,8 @@ auto format_result(const SingleDummyResult& result) -> std::string
   out << "alpha_beta_cutoffs: " << result.alpha_beta_cutoffs << '\n';
   out << "isomorphism_skipped: " << result.isomorphism_skipped_moves << '\n';
   out << "transposition_hits: " << result.transposition_hits << '\n';
+  out << "transposition_skipped_inexact: "
+      << result.transposition_skipped_inexact << '\n';
   out << "maximin: " << result.maximin_value << " (";
   for (std::size_t index = 0; index < result.maximin_cards.size(); ++index)
   {

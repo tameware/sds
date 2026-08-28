@@ -317,6 +317,21 @@ TEST(SingleDummySolverTest, FourCardSpadePositionReportsMaximinPerLead)
   EXPECT_EQ(result.maximin_cards.front(), card("H3"));
 }
 
+TEST(SingleDummySolverTest, TranspositionSkipsInexactAlphaBetaCutoffs)
+{
+  const auto result = solve_single_dummy(
+      parse_hand("K98.3.."),
+      parse_hand("AJT.2.."),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/0,
+      parse_hand("Q76543.45.."));
+
+  EXPECT_EQ(result.maximin_value, 3);
+  EXPECT_GT(result.alpha_beta_cutoffs, 0);
+  EXPECT_GT(result.transposition_skipped_inexact, 0);
+}
+
 TEST(SingleDummySolverTest, RelativeSuitEncodingMatchesIsomorphicHoldings)
 {
   std::array<std::vector<Card>, kHands> high_label{};
