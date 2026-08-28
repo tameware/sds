@@ -23,7 +23,7 @@ void print_usage()
       << "Usage: single_dummy_solver --known HAND --known-seat SEAT "
          "--dummy HAND --dummy-seat SEAT --available HAND --trump DENOM "
          "[--north-void SUITS] [--east-void SUITS] [--south-void SUITS] "
-         "[--west-void SUITS]\n"
+         "[--west-void SUITS] [--diagram]\n"
       << "  Hands use PBN suit fields (e.g. AJT.2..).\n"
       << "  Seats are N/E/S/W; denomination is S/H/D/C/NT.\n"
       << "  Void suits use S/H/D/C, comma-separated or run together (e.g. S,H "
@@ -45,6 +45,7 @@ auto main(int argc, char* argv[]) -> int
   std::string known_seat_text;
   std::string dummy_seat_text;
   std::string denomination_text;
+  bool show_diagram = false;
   std::array<std::string, single_dummy_solver::kHands> void_text{};
 
   for (int index = 1; index < argc; ++index)
@@ -105,6 +106,11 @@ auto main(int argc, char* argv[]) -> int
       void_text[3] = argv[++index];
       continue;
     }
+    if (arg == "--diagram")
+    {
+      show_diagram = true;
+      continue;
+    }
     std::cerr << "Unknown or incomplete argument: " << arg << '\n';
     print_usage();
     return 1;
@@ -126,13 +132,32 @@ auto main(int argc, char* argv[]) -> int
       seat_void_suits[static_cast<std::size_t>(seat)] =
           parse_optional_void(void_text[static_cast<std::size_t>(seat)]);
     }
+    const auto known = single_dummy_solver::parse_hand(known_text);
+    const auto dummy = single_dummy_solver::parse_hand(dummy_text);
+    const auto available = single_dummy_solver::parse_hand(available_text);
+    const int known_seat = single_dummy_solver::parse_seat(known_seat_text);
+    const int dummy_seat = single_dummy_solver::parse_seat(dummy_seat_text);
+    const int denomination =
+        single_dummy_solver::parse_denomination(denomination_text);
+    if (show_diagram)
+    {
+      std::cout << single_dummy_solver::format_position_diagram(
+          known,
+          dummy,
+          known_seat,
+          dummy_seat,
+          available,
+          denomination,
+          seat_void_suits);
+      std::cout << '\n';
+    }
     const auto result = single_dummy_solver::solve_single_dummy(
-        single_dummy_solver::parse_hand(known_text),
-        single_dummy_solver::parse_hand(dummy_text),
-        single_dummy_solver::parse_seat(known_seat_text),
-        single_dummy_solver::parse_seat(dummy_seat_text),
-        single_dummy_solver::parse_denomination(denomination_text),
-        single_dummy_solver::parse_hand(available_text),
+        known,
+        dummy,
+        known_seat,
+        dummy_seat,
+        denomination,
+        available,
         seat_void_suits);
     std::cout << single_dummy_solver::format_result(result);
     return 0;

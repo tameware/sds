@@ -38,6 +38,7 @@ using single_dummy_solver::parse_denomination;
 using single_dummy_solver::parse_hand;
 using single_dummy_solver::parse_seat;
 using single_dummy_solver::parse_void_suits;
+using single_dummy_solver::format_position_diagram;
 using single_dummy_solver::solve_single_dummy;
 using single_dummy_solver::validate_position;
 using single_dummy_solver::validate_seat_voids;
@@ -487,6 +488,47 @@ TEST(SingleDummySolverTest, FiveCardClubAceOnlyMaximinOnClubAceLead)
   EXPECT_EQ(result.maximin_value, 4);
   EXPECT_LT(*king_min, *club_ace_min);
   EXPECT_LT(*heart_min, *club_ace_min);
+}
+
+TEST(SingleDummySolverTest, FormatPositionDiagramShowsKnownHandsAndAvailablePool)
+{
+  const auto diagram = format_position_diagram(
+      parse_hand("K98.3..A"),
+      parse_hand("AJT.2..K"),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      parse_hand("Q765...234567"),
+      /*denomination=*/0,
+      {});
+
+  EXPECT_NE(diagram.find("Trump: S"), std::string::npos);
+  EXPECT_NE(diagram.find("North (dummy)"), std::string::npos);
+  EXPECT_NE(diagram.find("South (known)"), std::string::npos);
+  EXPECT_NE(diagram.find("East (opposition)"), std::string::npos);
+  EXPECT_NE(diagram.find("West (opposition)"), std::string::npos);
+  EXPECT_NE(diagram.find("S  AJT"), std::string::npos);
+  EXPECT_NE(diagram.find("S  K98"), std::string::npos);
+  EXPECT_NE(diagram.find("C  A"), std::string::npos);
+  EXPECT_NE(diagram.find("C  K"), std::string::npos);
+  EXPECT_NE(diagram.find("Available (East, West):"), std::string::npos);
+  EXPECT_NE(diagram.find("S  Q765"), std::string::npos);
+  EXPECT_NE(diagram.find("C  765432"), std::string::npos);
+}
+
+TEST(SingleDummySolverTest, FormatPositionDiagramShowsVoidSuits)
+{
+  std::array<int, kHands> seat_void_suits{};
+  seat_void_suits[1] = parse_void_suits("H");
+  const auto diagram = format_position_diagram(
+      parse_hand("K98.3..A"),
+      parse_hand("AJT.2..K"),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      parse_hand("Q765...234567"),
+      /*denomination=*/0,
+      seat_void_suits);
+
+  EXPECT_NE(diagram.find("East (opposition) [void: H]"), std::string::npos);
 }
 
 }  // namespace

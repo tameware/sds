@@ -360,6 +360,54 @@ auto card_to_string(const Card& card) -> std::string
       + rank_to_char(card.rank);
 }
 
+auto hand_to_suit_fields(const std::vector<Card>& hand) -> std::array<std::string, kSuits>
+{
+  std::array<std::vector<int>, kSuits> ranks{};
+  for (const auto& card : hand)
+  {
+    ranks[static_cast<std::size_t>(card.suit)].push_back(card.rank);
+  }
+  std::array<std::string, kSuits> fields{};
+  for (int suit = 0; suit < kSuits; ++suit)
+  {
+    auto& suit_ranks = ranks[static_cast<std::size_t>(suit)];
+    std::sort(suit_ranks.begin(), suit_ranks.end(), std::greater<int>());
+    for (const int rank : suit_ranks)
+    {
+      fields[static_cast<std::size_t>(suit)] += rank_to_char(rank);
+    }
+  }
+  return fields;
+}
+
+auto append_void_suffix(int void_mask, std::ostringstream& out) -> void
+{
+  if (void_mask == 0)
+  {
+    return;
+  }
+  out << " [void:";
+  for (int suit = 0; suit < kSuits; ++suit)
+  {
+    if ((void_mask & (1 << suit)) != 0)
+    {
+      out << ' ' << SuitChars[static_cast<std::size_t>(suit)];
+    }
+  }
+  out << ']';
+}
+
+auto append_hand_lines(
+    const std::array<std::string, kSuits>& fields,
+    std::ostringstream& out) -> void
+{
+  for (int suit = 0; suit < kSuits; ++suit)
+  {
+    out << "  " << SuitChars[static_cast<std::size_t>(suit)] << "  "
+        << fields[static_cast<std::size_t>(suit)] << '\n';
+  }
+}
+
 auto current_player(const GameState& state) -> int
 {
   return (state.leader + static_cast<int>(state.trick.size())) % kHands;
@@ -1227,6 +1275,86 @@ auto format_result(const SingleDummyResult& result) -> std::string
     }
     out << "  " << lead.min_tricks << '\n';
   }
+  return out.str();
+}
+
+auto format_position_diagram(
+    const std::vector<Card>& known,
+    const std::vector<Card>& dummy,
+    int known_seat,
+    int dummy_seat,
+    const std::vector<Card>& available,
+    int denomination,
+    const std::array<int, kHands>& seat_void_suits) -> std::string
+{
+  static constexpr std::array<std::string_view, kHands> seat_names =
+      {"North", "East", "South", "West"};
+  static constexpr std::array<std::string_view, 5> denom_labels =
+      {"S", "H", "D", "C", "NT"};
+
+  std::ostringstream out;
+  out << "Trump: " << denom_labels[static_cast<std::size_t>(denomination)]
+      << "\n\n";
+
+  const auto known_fields = hand_to_suit_fields(known);
+  const auto dummy_fields = hand_to_suit_fields(dummy);
+  const auto available_fields = hand_to_suit_fields(available);
+
+  std::vector<int> opposition;
+  for (int seat = 0; seat < kHands; ++seat)
+  {
+    if (seat != known_seat && seat != dummy_seat)
+    {
+      opposition.push_back(seat);
+    }
+  }
+
+  for (int seat = 0; seat < kHands; ++seat)
+  {
+    out << seat_names[static_cast<std::size_t>(seat)];
+    if (seat == known_seat)
+    {
+      out << " (known)";
+    }
+    else if (seat == dummy_seat)
+    {
+      out << " (dummy)";
+    }
+    else
+    {
+      out << " (opposition)";
+    }
+    append_void_suffix(
+        seat_void_suits[static_cast<std::size_t>(seat)],
+        out);
+    out << '\n';
+
+    if (seat == known_seat)
+    {
+      append_hand_lines(known_fields, out);
+    }
+    else if (seat == dummy_seat)
+    {
+      append_hand_lines(dummy_fields, out);
+    }
+    else
+    {
+      out << '\n';
+    }
+  }
+
+  out << '\n';
+  out << "Available (";
+  for (std::size_t index = 0; index < opposition.size(); ++index)
+  {
+    if (index > 0)
+    {
+      out << ", ";
+    }
+    out << seat_names[static_cast<std::size_t>(opposition[index])];
+  }
+  out << "):\n";
+  append_hand_lines(available_fields, out);
   return out.str();
 }
 

@@ -18,11 +18,15 @@ bazelisk test //:single_dummy_solver_test
 bazelisk run //:single_dummy_solver -- \
   --known K98.3..A --known-seat S \
   --dummy AJT.2..K --dummy-seat N \
-  --available Q765...234567 --trump S
+  --available Q765...234567 --trump S \
+  --diagram
 ```
 
 Void suits for mid-deal positions: `--north-void`, `--east-void`, `--south-void`,
 and `--west-void` (suit letters `S/H/D/C`, comma-separated or run together).
+
+Add `--diagram` to print the known hands, opposition seats, and the shared
+available-card pool before the analysis output.
 
 After changing `MODULE.bazel`, refresh the lockfile:
 

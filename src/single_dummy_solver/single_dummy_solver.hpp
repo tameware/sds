@@ -107,4 +107,13 @@ auto solve_single_dummy(
 
 auto format_result(const SingleDummyResult& result) -> std::string;
 
+auto format_position_diagram(
+    const std::vector<Card>& known,
+    const std::vector<Card>& dummy,
+    int known_seat,
+    int dummy_seat,
+    const std::vector<Card>& available,
+    int denomination,
+    const std::array<int, kHands>& seat_void_suits = {}) -> std::string;
+
 }  // namespace single_dummy_solver
