@@ -1,3 +1,7 @@
 common --enable_platform_specific_config
 common --lockfile_mode=error
 build --cxxopt=-std=c++20
+
+# GoogleTest headers can trigger conversion warnings on Clang; suppress them.
+build:macos --cxxopt=-Wno-character-conversion
+build:linux --cxxopt=-Wno-conversion
