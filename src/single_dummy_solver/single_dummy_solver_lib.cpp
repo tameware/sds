@@ -931,6 +931,32 @@ auto parse_seat(std::string_view text) -> int
   return static_cast<int>(pos);
 }
 
+auto parse_goal(std::string_view text) -> int
+{
+  if (text.empty())
+  {
+    throw std::invalid_argument("goal must be an integer");
+  }
+  try
+  {
+    std::size_t consumed = 0;
+    const int value = std::stoi(std::string(text), &consumed);
+    if (consumed != text.size())
+    {
+      throw std::invalid_argument("goal must be an integer");
+    }
+    return value;
+  }
+  catch (const std::invalid_argument&)
+  {
+    throw std::invalid_argument("goal must be an integer");
+  }
+  catch (const std::out_of_range&)
+  {
+    throw std::invalid_argument("goal must be an integer");
+  }
+}
+
 auto parse_denomination(std::string_view text) -> int
 {
   std::string key(text);

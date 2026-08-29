@@ -47,7 +47,7 @@ auto main(int argc, char* argv[]) -> int
   std::string dummy_seat_text;
   std::string denomination_text;
   bool show_diagram = false;
-  std::optional<int> goal;
+  std::optional<std::string> goal_text;
   std::array<std::string, single_dummy_solver::kHands> void_text{};
 
   for (int index = 1; index < argc; ++index)
@@ -115,7 +115,7 @@ auto main(int argc, char* argv[]) -> int
     }
     if (arg == "--goal" && index + 1 < argc)
     {
-      goal = std::stoi(argv[++index]);
+      goal_text = argv[++index];
       continue;
     }
     std::cerr << "Unknown or incomplete argument: " << arg << '\n';
@@ -146,6 +146,11 @@ auto main(int argc, char* argv[]) -> int
     const int dummy_seat = single_dummy_solver::parse_seat(dummy_seat_text);
     const int denomination =
         single_dummy_solver::parse_denomination(denomination_text);
+    std::optional<int> goal;
+    if (goal_text.has_value())
+    {
+      goal = single_dummy_solver::parse_goal(*goal_text);
+    }
     if (show_diagram)
     {
       std::cout << single_dummy_solver::format_position_diagram(

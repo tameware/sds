@@ -63,6 +63,8 @@ auto parse_hand(std::string_view text) -> std::vector<Card>;
 
 auto parse_seat(std::string_view text) -> int;
 
+auto parse_goal(std::string_view text) -> int;
+
 auto parse_denomination(std::string_view text) -> int;
 
 auto parse_void_suits(std::string_view text) -> int;

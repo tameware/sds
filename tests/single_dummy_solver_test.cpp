@@ -38,6 +38,7 @@ using single_dummy_solver::kRankBitmaskQueen;
 using single_dummy_solver::kRankBitmaskSix;
 using single_dummy_solver::parse_card;
 using single_dummy_solver::parse_denomination;
+using single_dummy_solver::parse_goal;
 using single_dummy_solver::parse_hand;
 using single_dummy_solver::parse_seat;
 using single_dummy_solver::parse_void_suits;
@@ -90,6 +91,13 @@ TEST(SingleDummySolverTest, ParseDenominationAndSeat)
   EXPECT_EQ(parse_seat("w"), 3);
   EXPECT_THROW(parse_denomination("X"), std::invalid_argument);
   EXPECT_THROW(parse_seat("X"), std::invalid_argument);
+}
+
+TEST(SingleDummySolverTest, ParseGoalRejectsNonIntegerText)
+{
+  EXPECT_EQ(parse_goal("4"), 4);
+  EXPECT_THROW(parse_goal("abc"), std::invalid_argument);
+  EXPECT_THROW(parse_goal("4x"), std::invalid_argument);
 }
 
 TEST(SingleDummySolverTest, FourCardPoolYieldsSeventySplits)
