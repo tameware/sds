@@ -12,6 +12,13 @@ namespace single_dummy_solver
 
 struct Card;
 
+enum class TranspositionBound : std::uint8_t
+{
+  Exact,
+  Lower,
+  Upper,
+};
+
 /// Snapshot of a search position for DDS-style transposition-table lookup.
 struct TranspositionPosition
 {
@@ -35,13 +42,20 @@ class TranspositionTable
 {
  public:
   static constexpr std::size_t kBucketCount = 4096;
-  auto lookup(const TranspositionPosition& position) -> std::optional<int>;
+  auto lookup(const TranspositionPosition& position, int& alpha, int& beta)
+      -> std::optional<int>;
 
-  auto store(const TranspositionPosition& position, int value) -> void;
+  auto store(
+      const TranspositionPosition& position,
+      int value,
+      int alpha,
+      int beta) -> void;
 
   auto hits() const -> int { return hits_; }
 
   auto stores() const -> int { return stores_; }
+
+  auto bound_cutoffs() const -> int { return bound_cutoffs_; }
 
  private:
   struct Entry
@@ -50,6 +64,7 @@ class TranspositionTable
     std::uint32_t context_hash = 0;
     std::array<unsigned, kSuits> win_mask{};
     std::array<unsigned, kSuits> order_set{};
+    TranspositionBound bound = TranspositionBound::Exact;
     int value = 0;
   };
 
@@ -65,6 +80,7 @@ class TranspositionTable
   std::vector<std::vector<Entry>> buckets_{kBucketCount};
   int hits_ = 0;
   int stores_ = 0;
+  int bound_cutoffs_ = 0;
 };
 
 auto build_transposition_position(

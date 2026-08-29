@@ -49,7 +49,7 @@ struct SingleDummyResult
   int alpha_beta_cutoffs;
   int isomorphism_skipped_moves;
   int transposition_hits;
-  int transposition_skipped_inexact;
+  int transposition_bound_cutoffs;
   int maximin_value;
   std::vector<Card> maximin_cards;
 };

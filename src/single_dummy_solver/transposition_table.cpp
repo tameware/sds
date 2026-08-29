@@ -2,6 +2,7 @@
 
 #include "single_dummy_solver.hpp"
 
+#include <algorithm>
 #include <functional>
 
 namespace single_dummy_solver
@@ -291,29 +292,62 @@ auto TranspositionTable::matches(
   return true;
 }
 
-auto TranspositionTable::lookup(const TranspositionPosition& position)
-    -> std::optional<int>
+auto TranspositionTable::lookup(
+    const TranspositionPosition& position,
+    int& alpha,
+    int& beta) -> std::optional<int>
 {
   const auto& bucket = buckets_[bucket_index(position)];
   for (const auto& entry : bucket)
   {
-    if (matches(entry, position))
+    if (!matches(entry, position))
     {
-      ++hits_;
+      continue;
+    }
+    ++hits_;
+    switch (entry.bound)
+    {
+      case TranspositionBound::Exact:
+        return entry.value;
+      case TranspositionBound::Lower:
+        alpha = std::max(alpha, entry.value);
+        break;
+      case TranspositionBound::Upper:
+        beta = std::min(beta, entry.value);
+        break;
+    }
+    if (alpha >= beta)
+    {
+      ++bound_cutoffs_;
       return entry.value;
     }
+    return std::nullopt;
   }
   return std::nullopt;
 }
 
-auto TranspositionTable::store(const TranspositionPosition& position, int value)
-    -> void
+auto TranspositionTable::store(
+    const TranspositionPosition& position,
+    int value,
+    int alpha,
+    int beta) -> void
 {
+  TranspositionBound bound = TranspositionBound::Exact;
+  if (value <= alpha)
+  {
+    bound = TranspositionBound::Upper;
+  }
+  else if (value >= beta)
+  {
+    bound = TranspositionBound::Lower;
+  }
+
   Entry entry{};
   entry.suit_lengths = suit_lengths_key(position);
   entry.context_hash = context_hash(position);
   entry.win_mask = position.win_mask;
   entry.order_set = position.stored_order_set;
+  entry.bound = bound;
   entry.value = value;
 
   auto& bucket = buckets_[bucket_index(position)];
@@ -321,7 +355,7 @@ auto TranspositionTable::store(const TranspositionPosition& position, int value)
   {
     if (matches(existing, position))
     {
-      existing.value = value;
+      existing = entry;
       ++stores_;
       return;
     }
