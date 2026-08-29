@@ -1,6 +1,6 @@
 "Global C++ compilation flags for SDS."
 
-SDS_CPPOPTS = select({
+SDS_BASE_CPPOPTS = select({
     "//:build_macos": [
         "-O3",
         "-flto=thin",
