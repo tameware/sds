@@ -41,10 +41,18 @@ def split_deal_args(deal_line: str) -> list[str]:
     return shlex.split(deal_line)
 
 
-def solver_command(binary: Path, deal_line: str, *, detail: bool = False) -> list[str]:
+def solver_command(
+    binary: Path,
+    deal_line: str,
+    *,
+    detail: bool = False,
+    goal: int | None = None,
+) -> list[str]:
     args = split_deal_args(deal_line)
     if detail:
         args.append("--diagram")
+    if goal is not None:
+        args.extend(["--goal", str(goal)])
     return [str(binary), *args]
 
 
@@ -56,9 +64,15 @@ def build_solver(root: Path = REPO_ROOT) -> None:
     )
 
 
-def run_deal(binary: Path, deal_line: str, *, detail: bool = False) -> float:
+def run_deal(
+    binary: Path,
+    deal_line: str,
+    *,
+    detail: bool = False,
+    goal: int | None = None,
+) -> float:
     start = time.perf_counter()
-    command = solver_command(binary, deal_line, detail=detail)
+    command = solver_command(binary, deal_line, detail=detail, goal=goal)
     if detail:
         subprocess.run(command, check=True, text=True)
     else:
@@ -120,6 +134,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="print each deal's solver output, including the position diagram",
     )
+    parser.add_argument(
+        "--goal",
+        type=int,
+        metavar="TRICKS",
+        help="pass --goal TRICKS to single_dummy_solver for each deal",
+    )
     return parser.parse_args(argv)
 
 
@@ -129,7 +149,7 @@ def main(argv: list[str] | None = None) -> int:
         build_solver()
     deals = parse_deal_lines(args.hand_list)
     times = [
-        run_deal(args.binary, deal_line, detail=args.detail)
+        run_deal(args.binary, deal_line, detail=args.detail, goal=args.goal)
         for deal_line in deals
     ]
     print(format_timing_summary(summarize_times(times)))

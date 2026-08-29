@@ -71,8 +71,20 @@ struct EvaluationStats
   int opposition_split_evaluations = 0;
   int alpha_beta_cutoffs = 0;
   int isomorphism_skipped_moves = 0;
+  int goal_cutoffs = 0;
+  std::optional<int> goal;
   TranspositionTable transposition_table;
 };
+
+auto try_goal_cutoff(EvaluationStats& stats, int value) -> bool
+{
+  if (stats.goal.has_value() && value < *stats.goal)
+  {
+    ++stats.goal_cutoffs;
+    return true;
+  }
+  return false;
+}
 
 constexpr int kRankBitmaskAll = 0x1FFF;
 
@@ -604,6 +616,11 @@ auto needs_adversarial_split(const GameState& state, int seat) -> bool
   return false;
 }
 
+auto mark_void_in_suit(GameState& state, int seat, int suit) -> void
+{
+  state.void_suits[static_cast<std::size_t>(seat)] |= 1 << suit;
+}
+
 auto cards_eligible_for_seat(
     const std::vector<Card>& pool,
     int void_suits) -> std::vector<Card>
@@ -675,6 +692,10 @@ auto evaluate_moves(
       ++stats.alpha_beta_cutoffs;
       break;
     }
+    if (!maximize && try_goal_cutoff(stats, result))
+    {
+      break;
+    }
   }
   return result;
 }
@@ -724,6 +745,10 @@ auto evaluate_recursive(
         ++stats.alpha_beta_cutoffs;
         break;
       }
+      if (try_goal_cutoff(stats, result))
+      {
+        break;
+      }
     }
   }
   else
@@ -748,6 +773,14 @@ auto apply_play(GameState state, const Card& card) -> GameState
     if (pool_it != state.remaining_available.end())
     {
       state.remaining_available.erase(pool_it);
+    }
+  }
+  if (!state.trick.empty())
+  {
+    const int lead_suit = state.trick.front().card.suit;
+    if (card.suit != lead_suit)
+    {
+      mark_void_in_suit(state, seat, lead_suit);
     }
   }
   state.trick.push_back(PlayedCard{seat, card});
@@ -1115,12 +1148,17 @@ auto solve_single_dummy(
     int dummy_seat,
     int denomination,
     const std::vector<Card>& available,
-    std::array<int, kHands> seat_void_suits) -> SingleDummyResult
+    std::array<int, kHands> seat_void_suits,
+    std::optional<int> goal) -> SingleDummyResult
 {
   validate_position(known, dummy, known_seat, dummy_seat, available);
   if (denomination < 0 || denomination > 4)
   {
     throw std::invalid_argument("denomination must be in 0..4");
+  }
+  if (goal.has_value() && (*goal < 0 || *goal > 13))
+  {
+    throw std::invalid_argument("goal must be in 0..13");
   }
 
   std::array<std::vector<Card>, kHands> hands{};
@@ -1150,10 +1188,12 @@ auto solve_single_dummy(
   int total_isomorphism_skipped = 0;
   int total_transposition_hits = 0;
   int total_transposition_bound_cutoffs = 0;
+  int total_goal_cutoffs = 0;
 
   for (const auto& lead_card : known)
   {
     EvaluationStats stats{};
+    stats.goal = goal;
     auto state = make_initial_state(
         known,
         dummy,
@@ -1186,6 +1226,10 @@ auto solve_single_dummy(
               stats,
               std::numeric_limits<int>::min(),
               std::numeric_limits<int>::max()));
+      if (try_goal_cutoff(stats, tricks))
+      {
+        break;
+      }
     }
     total_opposition_splits += stats.opposition_split_evaluations;
     total_alpha_beta_cutoffs += stats.alpha_beta_cutoffs;
@@ -1193,6 +1237,7 @@ auto solve_single_dummy(
     total_transposition_hits += stats.transposition_table.hits();
     total_transposition_bound_cutoffs +=
         stats.transposition_table.bound_cutoffs();
+    total_goal_cutoffs += stats.goal_cutoffs;
     values[lead_card] = tricks;
     matrix.push_back({{lead_card, tricks}});
   }
@@ -1204,6 +1249,8 @@ auto solve_single_dummy(
   result.isomorphism_skipped_moves = total_isomorphism_skipped;
   result.transposition_hits = total_transposition_hits;
   result.transposition_bound_cutoffs = total_transposition_bound_cutoffs;
+  result.goal_cutoffs = total_goal_cutoffs;
+  result.goal = goal;
   result.trick_matrix = std::move(matrix);
 
   auto ordered_known = known;
@@ -1231,6 +1278,13 @@ auto solve_single_dummy(
 
 auto format_result(const SingleDummyResult& result) -> std::string
 {
+  if (result.goal.has_value() && result.maximin_value < *result.goal)
+  {
+    std::ostringstream out;
+    out << *result.goal << " tricks unachieveable\n";
+    return out.str();
+  }
+
   std::ostringstream out;
   out << "combinations: " << result.combination_count << '\n';
   out << "opposition_splits: " << result.opposition_split_evaluations << '\n';
@@ -1239,6 +1293,10 @@ auto format_result(const SingleDummyResult& result) -> std::string
   out << "transposition_hits: " << result.transposition_hits << '\n';
   out << "transposition_bound_cutoffs: "
       << result.transposition_bound_cutoffs << '\n';
+  if (result.goal.has_value())
+  {
+    out << "goal_cutoffs: " << result.goal_cutoffs << '\n';
+  }
   out << "maximin: " << result.maximin_value << " (";
   for (std::size_t index = 0; index < result.maximin_cards.size(); ++index)
   {

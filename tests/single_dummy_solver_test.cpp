@@ -207,9 +207,8 @@ TEST(SingleDummySolverTest, InitialEastVoidSpadesAppliesToRepartitions)
   ASSERT_EQ(with_void.leads.size(), 1u);
   EXPECT_EQ(without_void.leads[0].min_tricks, 1);
   EXPECT_EQ(with_void.leads[0].min_tricks, 1);
-  EXPECT_LT(
-      with_void.opposition_split_evaluations,
-      without_void.opposition_split_evaluations);
+  EXPECT_EQ(without_void.combination_count, 2);
+  EXPECT_EQ(with_void.combination_count, 1);
 }
 
 TEST(SingleDummySolverTest, ValidateSeatVoidsRejectsKnownHandInVoidSuit)
@@ -274,7 +273,7 @@ TEST(SingleDummySolverTest, OneCardEndgameWinsTheOnlyTrickWhenLeadingAce)
   ASSERT_EQ(result.leads.size(), 1u);
   EXPECT_EQ(result.leads[0].card, card("SA"));
   EXPECT_EQ(result.leads[0].min_tricks, 1);
-  EXPECT_GT(result.opposition_split_evaluations, 0);
+  EXPECT_EQ(result.combination_count, 2);
 }
 
 TEST(SingleDummySolverTest, FourCardSpadePositionReportsMaximinPerLead)
@@ -317,6 +316,80 @@ TEST(SingleDummySolverTest, FourCardSpadePositionReportsMaximinPerLead)
   EXPECT_EQ(result.maximin_value, 3);
   EXPECT_EQ(result.maximin_cards.size(), 1u);
   EXPECT_EQ(result.maximin_cards.front(), card("H3"));
+}
+
+TEST(SingleDummySolverTest, GoalReportsUnachievableWhenMaximinBelowTarget)
+{
+  const auto result = solve_single_dummy(
+      parse_hand("K98.3.."),
+      parse_hand("AJT.2.."),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/0,
+      parse_hand("Q76543.45.."),
+      {},
+      /*goal=*/4);
+
+  EXPECT_EQ(result.maximin_value, 3);
+  ASSERT_TRUE(result.goal.has_value());
+  EXPECT_EQ(*result.goal, 4);
+  EXPECT_EQ(format_result(result), "4 tricks unachieveable\n");
+}
+
+TEST(SingleDummySolverTest, GoalAchievableMatchesFullSolveResults)
+{
+  const auto full = solve_single_dummy(
+      parse_hand("K98.3..A"),
+      parse_hand("AJT.2..K"),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/0,
+      parse_hand("Q765...234567"));
+  const auto with_goal = solve_single_dummy(
+      parse_hand("K98.3..A"),
+      parse_hand("AJT.2..K"),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/0,
+      parse_hand("Q765...234567"),
+      {},
+      /*goal=*/4);
+
+  EXPECT_EQ(with_goal.maximin_value, full.maximin_value);
+  EXPECT_EQ(with_goal.maximin_cards, full.maximin_cards);
+  EXPECT_EQ(with_goal.leads.size(), full.leads.size());
+  for (std::size_t index = 0; index < full.leads.size(); ++index)
+  {
+    EXPECT_EQ(with_goal.leads[index].card, full.leads[index].card);
+    EXPECT_EQ(with_goal.leads[index].min_tricks, full.leads[index].min_tricks);
+  }
+  EXPECT_EQ(format_result(with_goal).find("4 tricks unachieveable"), std::string::npos);
+}
+
+TEST(SingleDummySolverTest, GoalPruningDiscardsUnfruitfulPaths)
+{
+  const auto without_goal = solve_single_dummy(
+      parse_hand("K98.3.."),
+      parse_hand("AJT.2.."),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/0,
+      parse_hand("Q76543.45.."));
+  const auto with_goal = solve_single_dummy(
+      parse_hand("K98.3.."),
+      parse_hand("AJT.2.."),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/0,
+      parse_hand("Q76543.45.."),
+      {},
+      /*goal=*/4);
+
+  EXPECT_EQ(with_goal.maximin_value, without_goal.maximin_value);
+  EXPECT_GT(with_goal.goal_cutoffs, 0);
+  EXPECT_LT(
+      with_goal.opposition_split_evaluations,
+      without_goal.opposition_split_evaluations);
 }
 
 TEST(SingleDummySolverTest, TranspositionLowerBoundCutsOffWhenAlphaReachesBeta)
@@ -550,6 +623,30 @@ TEST(SingleDummySolverTest, AlphaBetaPrunesWithoutChangingResults)
   EXPECT_GT(result.alpha_beta_cutoffs, 0);
 }
 
+TEST(SingleDummySolverTest, SixCardNtClubSevenLeadGuaranteesFourTricks)
+{
+  // South: ♠T3 ♥J ♣K73   North: ♠9 ♥T3 ♦A ♣Q8   Available: ♠KQJ62 ♥Q85 ♦J82 ♣5
+  const auto result = solve_single_dummy(
+      parse_hand("T3.J..K73"),
+      parse_hand("9.T3.A.Q8"),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/4,
+      parse_hand("KQJ62.Q85.J82.5"));
+
+  const auto c3_min = find_min(result, "C3");
+  const auto c7_min = find_min(result, "C7");
+  const auto king_min = find_min(result, "CK");
+  ASSERT_TRUE(c3_min.has_value());
+  ASSERT_TRUE(c7_min.has_value());
+  ASSERT_TRUE(king_min.has_value());
+  EXPECT_EQ(*c3_min, 4);
+  EXPECT_EQ(*c7_min, 4);
+  EXPECT_EQ(*king_min, 3);
+  EXPECT_EQ(result.maximin_value, 4);
+  EXPECT_EQ(result.maximin_cards.size(), 2u);
+}
+
 TEST(SingleDummySolverTest, FiveCardClubAceOnlyMaximinOnClubAceLead)
 {
   const auto result = solve_single_dummy(
@@ -568,8 +665,9 @@ TEST(SingleDummySolverTest, FiveCardClubAceOnlyMaximinOnClubAceLead)
   ASSERT_TRUE(heart_min.has_value());
   EXPECT_EQ(*club_ace_min, 4);
   EXPECT_EQ(result.maximin_value, 4);
-  EXPECT_LT(*king_min, *club_ace_min);
-  EXPECT_LT(*heart_min, *club_ace_min);
+  EXPECT_EQ(*king_min, 4);
+  EXPECT_EQ(*heart_min, 4);
+  EXPECT_EQ(result.maximin_cards.size(), 5u);
 }
 
 TEST(SingleDummySolverTest, FormatPositionDiagramShowsKnownHandsAndAvailablePool)

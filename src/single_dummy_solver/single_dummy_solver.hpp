@@ -11,6 +11,7 @@
 
 #include <array>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -50,6 +51,8 @@ struct SingleDummyResult
   int isomorphism_skipped_moves;
   int transposition_hits;
   int transposition_bound_cutoffs;
+  int goal_cutoffs;
+  std::optional<int> goal;
   int maximin_value;
   std::vector<Card> maximin_cards;
 };
@@ -103,7 +106,8 @@ auto solve_single_dummy(
     int dummy_seat,
     int denomination,
     const std::vector<Card>& available,
-    std::array<int, kHands> seat_void_suits = {}) -> SingleDummyResult;
+    std::array<int, kHands> seat_void_suits = {},
+    std::optional<int> goal = std::nullopt) -> SingleDummyResult;
 
 auto format_result(const SingleDummyResult& result) -> std::string;
 

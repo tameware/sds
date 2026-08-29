@@ -114,6 +114,32 @@ class BenchmarkHandListTest(unittest.TestCase):
         args = parse_args(["hands/list3_4_cards.txt", "--detail"])
         self.assertTrue(args.detail)
 
+    def test_solver_command_appends_goal_when_set(self):
+        from benchmark_hand_list import solver_command
+
+        command = solver_command(
+            Path("/tmp/single_dummy_solver"),
+            "--known A... --known-seat S --dummy K... --dummy-seat N",
+            goal=4,
+        )
+        self.assertEqual(command[-2:], ["--goal", "4"])
+
+    def test_run_deal_with_goal_forwards_goal_flag(self):
+        from benchmark_hand_list import run_deal
+
+        binary = Path("/tmp/single_dummy_solver")
+        with mock.patch("benchmark_hand_list.subprocess.run") as run_mock:
+            run_mock.return_value = mock.Mock(returncode=0)
+            with mock.patch("benchmark_hand_list.time.perf_counter", side_effect=[1.0, 2.0]):
+                run_deal(binary, "--known A... --known-seat S", goal=4)
+        self.assertEqual(run_mock.call_args.args[0][-2:], ["--goal", "4"])
+
+    def test_parse_args_accepts_goal_flag(self):
+        from benchmark_hand_list import parse_args
+
+        args = parse_args(["hands/list3_4_cards.txt", "--goal", "4"])
+        self.assertEqual(args.goal, 4)
+
 
 if __name__ == "__main__":
     unittest.main()
