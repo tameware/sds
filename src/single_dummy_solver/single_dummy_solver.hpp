@@ -99,6 +99,21 @@ auto distinct_representative_ranks_in_suit(
     int hand_mask,
     int unavailable_mask) -> std::vector<int>;
 
+struct AdversarialSplitQuery
+{
+  int known_seat;
+  int dummy_seat;
+  int east_seat;
+  int west_seat;
+  int east_slots;
+  int west_slots;
+  std::array<std::vector<Card>, kHands> hands{};
+  std::vector<Card> remaining_available;
+};
+
+auto needs_adversarial_split(const AdversarialSplitQuery& query, int seat)
+    -> bool;
+
 auto solve_single_dummy(
     const std::vector<Card>& known,
     const std::vector<Card>& dummy,

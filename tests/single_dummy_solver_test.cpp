@@ -28,8 +28,10 @@ using single_dummy_solver::SingleDummyResult;
 using single_dummy_solver::TranspositionTable;
 using single_dummy_solver::build_transposition_position;
 using single_dummy_solver::card_scores_from_future_tricks;
+using single_dummy_solver::AdversarialSplitQuery;
 using single_dummy_solver::distinct_representative_ranks_in_suit;
 using single_dummy_solver::enumerate_constrained_opponent_splits;
+using single_dummy_solver::needs_adversarial_split;
 using single_dummy_solver::enumerate_unknown_splits;
 using single_dummy_solver::kHands;
 using single_dummy_solver::kRankBitmaskQueen;
@@ -316,6 +318,28 @@ TEST(SingleDummySolverTest, FourCardSpadePositionReportsMaximinPerLead)
   EXPECT_EQ(result.maximin_value, 3);
   EXPECT_EQ(result.maximin_cards.size(), 1u);
   EXPECT_EQ(result.maximin_cards.front(), card("H3"));
+}
+
+TEST(SingleDummySolverTest, OpponentEmptyHandNeedsAdversarialSplit)
+{
+  // Before opponents are dealt, unseen cards sit in remaining_available with
+  // empty opponent hands. An opponent seat about to play must trigger split.
+  AdversarialSplitQuery query{};
+  query.known_seat = 2;
+  query.dummy_seat = 0;
+  query.east_seat = 1;
+  query.west_seat = 3;
+  query.east_slots = 4;
+  query.west_slots = 4;
+  query.remaining_available = parse_hand("QJT9.QJT9..");
+
+  EXPECT_TRUE(needs_adversarial_split(query, /*seat=*/1));
+  EXPECT_TRUE(needs_adversarial_split(query, /*seat=*/3));
+  EXPECT_TRUE(needs_adversarial_split(query, /*seat=*/2));
+
+  query.hands[static_cast<std::size_t>(query.east_seat)] =
+      parse_hand("QJT9...");
+  EXPECT_FALSE(needs_adversarial_split(query, /*seat=*/1));
 }
 
 TEST(SingleDummySolverTest, RepartitionsBeforeEveryPartnershipPlayIncludingMidTrickFollows)

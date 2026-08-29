@@ -613,7 +613,7 @@ auto needs_adversarial_split(const GameState& state, int seat) -> bool
   {
     return true;
   }
-  return false;
+  return state.hands[static_cast<std::size_t>(seat)].empty();
 }
 
 auto mark_void_in_suit(GameState& state, int seat, int suit) -> void
@@ -834,7 +834,29 @@ auto make_initial_state(
   return state;
 }
 
+auto needs_adversarial_split_from_query(
+    const AdversarialSplitQuery& query,
+    int seat) -> bool
+{
+  GameState state{};
+  state.known_seat = query.known_seat;
+  state.dummy_seat = query.dummy_seat;
+  state.east_seat = query.east_seat;
+  state.west_seat = query.west_seat;
+  state.east_slots = query.east_slots;
+  state.west_slots = query.west_slots;
+  state.hands = query.hands;
+  state.remaining_available = query.remaining_available;
+  return needs_adversarial_split(state, seat);
+}
+
 }  // namespace
+
+auto needs_adversarial_split(const AdversarialSplitQuery& query, int seat)
+    -> bool
+{
+  return needs_adversarial_split_from_query(query, seat);
+}
 
 auto distinct_representative_ranks_in_suit(
     int hand_mask,
