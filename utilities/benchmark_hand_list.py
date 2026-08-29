@@ -41,6 +41,13 @@ def split_deal_args(deal_line: str) -> list[str]:
     return shlex.split(deal_line)
 
 
+def solver_command(binary: Path, deal_line: str, *, detail: bool = False) -> list[str]:
+    args = split_deal_args(deal_line)
+    if detail:
+        args.append("--diagram")
+    return [str(binary), *args]
+
+
 def build_solver(root: Path = REPO_ROOT) -> None:
     subprocess.run(
         ["bazelisk", "build", "//:single_dummy_solver"],
@@ -49,14 +56,18 @@ def build_solver(root: Path = REPO_ROOT) -> None:
     )
 
 
-def run_deal(binary: Path, deal_line: str) -> float:
+def run_deal(binary: Path, deal_line: str, *, detail: bool = False) -> float:
     start = time.perf_counter()
-    subprocess.run(
-        [str(binary), *split_deal_args(deal_line)],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    command = solver_command(binary, deal_line, detail=detail)
+    if detail:
+        subprocess.run(command, check=True, text=True)
+    else:
+        subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
     return time.perf_counter() - start
 
 
@@ -104,6 +115,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="skip bazelisk build and use the existing binary",
     )
+    parser.add_argument(
+        "--detail",
+        action="store_true",
+        help="print each deal's solver output, including the position diagram",
+    )
     return parser.parse_args(argv)
 
 
@@ -112,7 +128,10 @@ def main(argv: list[str] | None = None) -> int:
     if not args.skip_build:
         build_solver()
     deals = parse_deal_lines(args.hand_list)
-    times = [run_deal(args.binary, deal_line) for deal_line in deals]
+    times = [
+        run_deal(args.binary, deal_line, detail=args.detail)
+        for deal_line in deals
+    ]
     print(format_timing_summary(summarize_times(times)))
     return 0
 

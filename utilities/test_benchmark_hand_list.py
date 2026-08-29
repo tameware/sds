@@ -83,6 +83,36 @@ class BenchmarkHandListTest(unittest.TestCase):
                 elapsed = run_deal(binary, "--known A... --known-seat S")
         self.assertAlmostEqual(elapsed, 2.25)
         run_mock.assert_called_once()
+        self.assertTrue(run_mock.call_args.kwargs["capture_output"])
+
+    def test_run_deal_with_detail_forwards_solver_output(self):
+        from benchmark_hand_list import run_deal
+
+        binary = Path("/tmp/single_dummy_solver")
+        with mock.patch("benchmark_hand_list.subprocess.run") as run_mock:
+            run_mock.return_value = mock.Mock(returncode=0)
+            with mock.patch("benchmark_hand_list.time.perf_counter", side_effect=[1.0, 2.0]):
+                run_deal(binary, "--known A... --known-seat S", detail=True)
+        self.assertNotIn("capture_output", run_mock.call_args.kwargs)
+        self.assertEqual(run_mock.call_args.args[0][-1], "--diagram")
+
+    def test_solver_command_appends_diagram_when_detail_enabled(self):
+        from benchmark_hand_list import solver_command
+
+        command = solver_command(
+            Path("/tmp/single_dummy_solver"),
+            "--known A... --known-seat S --dummy K... --dummy-seat N",
+            detail=True,
+        )
+        self.assertEqual(command[0], "/tmp/single_dummy_solver")
+        self.assertEqual(command[-1], "--diagram")
+        self.assertNotIn("--diagram", command[:-1])
+
+    def test_parse_args_accepts_detail_flag(self):
+        from benchmark_hand_list import parse_args
+
+        args = parse_args(["hands/list3_4_cards.txt", "--detail"])
+        self.assertTrue(args.detail)
 
 
 if __name__ == "__main__":
