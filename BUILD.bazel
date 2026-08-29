@@ -79,8 +79,7 @@ cc_binary(
 
 cc_test(
     name = "single_dummy_solver_test",
-    size = "medium",
-    timeout = "long",
+    size = "small",
     srcs = ["tests/single_dummy_solver_test.cpp"],
     copts = SDS_CPPOPTS,
     local_defines = SDS_LOCAL_DEFINES,
