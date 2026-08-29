@@ -318,6 +318,46 @@ TEST(SingleDummySolverTest, FourCardSpadePositionReportsMaximinPerLead)
   EXPECT_EQ(result.maximin_cards.front(), card("H3"));
 }
 
+TEST(SingleDummySolverTest, RepartitionsBeforeEveryPartnershipPlayIncludingMidTrickFollows)
+{
+  // Opposition re-deals remaining unseen cards before each partnership play,
+  // including when dummy follows mid-trick. Skipping mid-trick repartition
+  // collapses opposition_splits on this deal from ~30k to ~4.5k.
+  const auto result = solve_single_dummy(
+      parse_hand("K98.3.."),
+      parse_hand("AJT.2.."),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/0,
+      parse_hand("Q76543.45.."));
+
+  EXPECT_GT(result.opposition_split_evaluations, 10'000);
+}
+
+TEST(SingleDummySolverTest, MidTrickRepartitionCapsClubAceLeadOnFiveCardDeal)
+{
+  // South: ♠T52 ♦2 ♣A   North: ♠J6 ♥5 ♦A4   Available: ♠743 ♥JT873 ♦T3
+  //
+  // Leading ♣A reaches a mid-trick dummy follow where opposition must be
+  // allowed to re-deal remaining unseen cards. Skipping that repartition
+  // inflates the ♣A guarantee from three tricks to four.
+  const auto result = solve_single_dummy(
+      parse_hand("T52..2.A"),
+      parse_hand("J6.5.A4."),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/0,
+      parse_hand("743.JT873.T3."));
+
+  const auto spade_two_min = find_min(result, "S2");
+  const auto club_ace_min = find_min(result, "CA");
+  ASSERT_TRUE(spade_two_min.has_value());
+  ASSERT_TRUE(club_ace_min.has_value());
+  EXPECT_EQ(*spade_two_min, 4);
+  EXPECT_EQ(*club_ace_min, 3);
+  EXPECT_EQ(result.maximin_value, 4);
+}
+
 TEST(SingleDummySolverTest, GoalReportsUnachievableWhenMaximinBelowTarget)
 {
   const auto result = solve_single_dummy(
@@ -623,16 +663,17 @@ TEST(SingleDummySolverTest, AlphaBetaPrunesWithoutChangingResults)
   EXPECT_GT(result.alpha_beta_cutoffs, 0);
 }
 
-TEST(SingleDummySolverTest, SixCardNtClubSevenLeadGuaranteesFourTricks)
+TEST(SingleDummySolverTest, FiveCardNtClubSevenLeadGuaranteesFourTricks)
 {
-  // South: ♠T3 ♥J ♣K73   North: ♠9 ♥T3 ♦A ♣Q8   Available: ♠KQJ62 ♥Q85 ♦J82 ♣5
+  // South: ♠T ♥J ♣K73   North: ♥T3 ♦A ♣Q8   Available: ♠KQJ ♥Q85 ♦J82 ♣5
+  // Without void tracking during play, C7 drops from 4 to 3 (illegal heart re-deals).
   const auto result = solve_single_dummy(
-      parse_hand("T3.J..K73"),
-      parse_hand("9.T3.A.Q8"),
+      parse_hand("T.J..K73"),
+      parse_hand(".T3.A.Q8"),
       /*known_seat=*/2,
       /*dummy_seat=*/0,
       /*denomination=*/4,
-      parse_hand("KQJ62.Q85.J82.5"));
+      parse_hand("KQJ.Q85.J82.5"));
 
   const auto c3_min = find_min(result, "C3");
   const auto c7_min = find_min(result, "C7");
