@@ -11,6 +11,7 @@ from benchmark_hand_list import (
     format_timing_summary,
     parse_deal_lines,
     repo_root,
+    shows_solver_output,
     split_deal_args,
     summarize_times,
 )
@@ -73,6 +74,10 @@ class BenchmarkHandListTest(unittest.TestCase):
             repo_root() / "bazel-bin" / "single_dummy_solver",
         )
 
+    def test_shows_solver_output_when_diagram_requested(self):
+        self.assertTrue(shows_solver_output(["--diagram"]))
+        self.assertFalse(shows_solver_output(["--threads", "4"]))
+
     def test_run_deal_times_subprocess(self):
         from benchmark_hand_list import run_deal
 
@@ -85,111 +90,72 @@ class BenchmarkHandListTest(unittest.TestCase):
         run_mock.assert_called_once()
         self.assertTrue(run_mock.call_args.kwargs["capture_output"])
 
-    def test_run_deal_with_detail_forwards_solver_output(self):
+    def test_run_deal_forwards_solver_output_when_diagram_requested(self):
         from benchmark_hand_list import run_deal
 
         binary = Path("/tmp/single_dummy_solver")
         with mock.patch("benchmark_hand_list.subprocess.run") as run_mock:
             run_mock.return_value = mock.Mock(returncode=0)
             with mock.patch("benchmark_hand_list.time.perf_counter", side_effect=[1.0, 2.0]):
-                run_deal(binary, "--known A... --known-seat S", detail=True)
+                run_deal(
+                    binary,
+                    "--known A... --known-seat S",
+                    extra_args=["--diagram"],
+                )
         self.assertNotIn("capture_output", run_mock.call_args.kwargs)
         self.assertEqual(run_mock.call_args.args[0][-1], "--diagram")
 
-    def test_solver_command_appends_diagram_when_detail_enabled(self):
+    def test_solver_command_appends_extra_solver_args(self):
         from benchmark_hand_list import solver_command
 
         command = solver_command(
             Path("/tmp/single_dummy_solver"),
             "--known A... --known-seat S --dummy K... --dummy-seat N",
-            detail=True,
+            extra_args=["--threads", "4", "--goal", "8"],
         )
-        self.assertEqual(command[0], "/tmp/single_dummy_solver")
-        self.assertEqual(command[-1], "--diagram")
-        self.assertNotIn("--diagram", command[:-1])
+        self.assertEqual(command[-4:], ["--threads", "4", "--goal", "8"])
 
-    def test_parse_args_accepts_detail_flag(self):
+    def test_parse_args_accepts_benchmark_flags_only(self):
         from benchmark_hand_list import parse_args
 
-        args = parse_args(["hands/list3_4_cards.txt", "--detail"])
-        self.assertTrue(args.detail)
+        args = parse_args(["hands/list3_4_cards.txt", "--skip-build"])
+        self.assertTrue(args.skip_build)
+        self.assertEqual(args.solver_extra, [])
 
-    def test_solver_command_appends_goal_when_set(self):
-        from benchmark_hand_list import solver_command
+    def test_parse_args_collects_solver_flags_after_double_dash(self):
+        from benchmark_hand_list import parse_args
 
-        command = solver_command(
-            Path("/tmp/single_dummy_solver"),
-            "--known A... --known-seat S --dummy K... --dummy-seat N",
-            goal=4,
+        args = parse_args(
+            [
+                "hands/list3_4_cards.txt",
+                "--skip-build",
+                "--",
+                "--search-threads",
+                "4",
+                "--goal",
+                "8",
+                "--diagram",
+            ]
         )
-        self.assertEqual(command[-2:], ["--goal", "4"])
+        self.assertTrue(args.skip_build)
+        self.assertEqual(
+            args.solver_extra,
+            ["--search-threads", "4", "--goal", "8", "--diagram"],
+        )
 
-    def test_run_deal_with_goal_forwards_goal_flag(self):
+    def test_run_deal_forwards_extra_solver_args(self):
         from benchmark_hand_list import run_deal
 
         binary = Path("/tmp/single_dummy_solver")
         with mock.patch("benchmark_hand_list.subprocess.run") as run_mock:
             run_mock.return_value = mock.Mock(returncode=0)
             with mock.patch("benchmark_hand_list.time.perf_counter", side_effect=[1.0, 2.0]):
-                run_deal(binary, "--known A... --known-seat S", goal=4)
-        self.assertEqual(run_mock.call_args.args[0][-2:], ["--goal", "4"])
-
-    def test_parse_args_accepts_goal_flag(self):
-        from benchmark_hand_list import parse_args
-
-        args = parse_args(["hands/list3_4_cards.txt", "--goal", "4"])
-        self.assertEqual(args.goal, 4)
-
-    def test_solver_command_omits_threads_when_not_set(self):
-        from benchmark_hand_list import solver_command
-
-        command = solver_command(
-            Path("/tmp/single_dummy_solver"),
-            "--known A... --known-seat S --dummy K... --dummy-seat N",
-        )
-        self.assertNotIn("--threads", command)
-
-    def test_solver_command_appends_threads_when_set(self):
-        from benchmark_hand_list import solver_command
-
-        command = solver_command(
-            Path("/tmp/single_dummy_solver"),
-            "--known A... --known-seat S --dummy K... --dummy-seat N",
-            threads=0,
-        )
-        self.assertEqual(command[-2:], ["--threads", "0"])
-
-        command = solver_command(
-            Path("/tmp/single_dummy_solver"),
-            "--known A... --known-seat S --dummy K... --dummy-seat N",
-            threads=4,
-        )
-        self.assertEqual(command[-2:], ["--threads", "4"])
-
-    def test_run_deal_with_threads_forwards_threads_flag(self):
-        from benchmark_hand_list import run_deal
-
-        binary = Path("/tmp/single_dummy_solver")
-        with mock.patch("benchmark_hand_list.subprocess.run") as run_mock:
-            run_mock.return_value = mock.Mock(returncode=0)
-            with mock.patch("benchmark_hand_list.time.perf_counter", side_effect=[1.0, 2.0]):
-                run_deal(binary, "--known A... --known-seat S", threads=4)
-        self.assertEqual(run_mock.call_args.args[0][-2:], ["--threads", "4"])
-
-    def test_parse_args_accepts_threads_flag(self):
-        from benchmark_hand_list import parse_args
-
-        args = parse_args(["hands/list3_4_cards.txt", "--threads", "0"])
-        self.assertEqual(args.threads, 0)
-
-        args = parse_args(["hands/list3_4_cards.txt", "--threads", "4"])
-        self.assertEqual(args.threads, 4)
-
-    def test_parse_args_rejects_negative_threads(self):
-        from benchmark_hand_list import parse_args
-
-        with self.assertRaises(SystemExit):
-            parse_args(["hands/list3_4_cards.txt", "--threads", "-1"])
+                run_deal(
+                    binary,
+                    "--known A... --known-seat S",
+                    extra_args=["--search-threads", "0"],
+                )
+        self.assertEqual(run_mock.call_args.args[0][-2:], ["--search-threads", "0"])
 
 
 if __name__ == "__main__":
