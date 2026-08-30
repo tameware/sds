@@ -144,15 +144,19 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return args
 
 
+def print_deal_separator() -> None:
+    print("--", flush=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     if not args.skip_build:
         build_solver()
     deals = parse_deal_lines(args.hand_list)
-    times = [
-        run_deal(args.binary, deal_line, extra_args=args.solver_extra)
-        for deal_line in deals
-    ]
+    times = []
+    for deal_line in deals:
+        times.append(run_deal(args.binary, deal_line, extra_args=args.solver_extra))
+        print_deal_separator()
     print(format_timing_summary(summarize_times(times)))
     return 0
 

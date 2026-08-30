@@ -158,5 +158,29 @@ class BenchmarkHandListTest(unittest.TestCase):
         self.assertEqual(run_mock.call_args.args[0][-2:], ["--search-threads", "0"])
 
 
+    def test_main_prints_separator_after_each_deal(self):
+        from benchmark_hand_list import main
+
+        with mock.patch("benchmark_hand_list.build_solver"), mock.patch(
+            "benchmark_hand_list.run_deal",
+            return_value=1.0,
+        ), mock.patch(
+            "benchmark_hand_list.parse_deal_lines",
+            return_value=["--known A...", "--known B..."],
+        ), mock.patch(
+            "benchmark_hand_list.print_deal_separator",
+        ) as separator_mock:
+            main(["hands/list3_4_cards.txt", "--skip-build"])
+
+        self.assertEqual(separator_mock.call_count, 2)
+
+    def test_print_deal_separator_writes_double_dash_line(self):
+        from benchmark_hand_list import print_deal_separator
+
+        with mock.patch("builtins.print") as print_mock:
+            print_deal_separator()
+        print_mock.assert_called_once_with("--", flush=True)
+
+
 if __name__ == "__main__":
     unittest.main()

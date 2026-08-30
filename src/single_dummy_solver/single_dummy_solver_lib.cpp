@@ -1617,17 +1617,17 @@ auto format_result(const SingleDummyResult& result, bool show_info) -> std::stri
     {
       out << "goal_cutoffs: " << result.goal_cutoffs << '\n';
     }
-  }
-  out << "maximin: " << result.maximin_value << " (";
-  for (std::size_t index = 0; index < result.maximin_cards.size(); ++index)
-  {
-    if (index > 0)
+    out << "maximin: " << result.maximin_value << " (";
+    for (std::size_t index = 0; index < result.maximin_cards.size(); ++index)
     {
-      out << ", ";
+      if (index > 0)
+      {
+        out << ", ";
+      }
+      out << card_to_string(result.maximin_cards[index]);
     }
-    out << card_to_string(result.maximin_cards[index]);
+    out << ")\n";
   }
-  out << ")\n";
   out << "card  min_tricks\n";
   for (const auto& lead : result.leads)
   {

@@ -409,7 +409,7 @@ TEST(SingleDummySolverTest, FormatResultHidesAlgorithmCountsByDefault)
   EXPECT_EQ(formatted.find("combinations:"), std::string::npos);
   EXPECT_EQ(formatted.find("opposition_splits:"), std::string::npos);
   EXPECT_EQ(formatted.find("alpha_beta_cutoffs:"), std::string::npos);
-  EXPECT_NE(formatted.find("maximin:"), std::string::npos);
+  EXPECT_EQ(formatted.find("maximin:"), std::string::npos);
   EXPECT_NE(formatted.find("card  min_tricks"), std::string::npos);
 }
 
@@ -431,6 +431,7 @@ TEST(SingleDummySolverTest, FormatResultShowsAlgorithmCountsWithInfo)
   EXPECT_NE(formatted.find("isomorphism_skipped:"), std::string::npos);
   EXPECT_NE(formatted.find("transposition_hits:"), std::string::npos);
   EXPECT_NE(formatted.find("transposition_bound_cutoffs:"), std::string::npos);
+  EXPECT_NE(formatted.find("maximin:"), std::string::npos);
 }
 
 TEST(SingleDummySolverTest, GoalReportsUnachievableWhenMaximinBelowTarget)
