@@ -7,7 +7,6 @@
    See LICENSE and README.
 */
 
-#include <array>
 #include <cstdlib>
 #include <iostream>
 #include <optional>
@@ -23,20 +22,14 @@ void print_usage()
   std::cerr
       << "Usage: single_dummy_solver --known HAND --known-seat SEAT "
          "--dummy HAND --dummy-seat SEAT --available HAND --trump DENOM "
-         "[--north-void SUITS] [--east-void SUITS] [--south-void SUITS] "
-         "[--west-void SUITS] [--diagram] [--info] [--goal TRICKS] [--threads N] "
+         "[--constraint EXPR] [--diagram] [--info] [--goal TRICKS] [--threads N] "
          "[--min-significant-rank RANK]\n"
       << "  N=0 selects hardware concurrency (default).\n"
       << "  RANK=2..14 or rank character; default 2 treats every card as significant.\n"
       << "  Hands use PBN suit fields (e.g. AJT.2..).\n"
       << "  Seats are N/E/S/W; denomination is S/H/D/C/NT.\n"
-      << "  Void suits use S/H/D/C, comma-separated or run together (e.g. S,H "
-         "or SH).\n";
-}
-
-auto parse_optional_void(std::string_view text) -> int
-{
-  return text.empty() ? 0 : single_dummy_solver::parse_void_suits(text);
+      << "  CONSTRAINT is a redeal-style Python expression on deal.north/east/"
+         "south/west (e.g. len(deal.east.spades) == 0 and deal.west.hcp >= 8).\n";
 }
 
 }  // namespace
@@ -52,9 +45,9 @@ auto main(int argc, char* argv[]) -> int
   bool show_diagram = false;
   bool show_info = false;
   std::optional<std::string> goal_text;
+  std::optional<std::string> constraint_text;
   int thread_count = 0;
   int min_significant_rank = 2;
-  std::array<std::string, single_dummy_solver::kHands> void_text{};
 
   for (int index = 1; index < argc; ++index)
   {
@@ -94,24 +87,9 @@ auto main(int argc, char* argv[]) -> int
       denomination_text = argv[++index];
       continue;
     }
-    if (arg == "--north-void" && index + 1 < argc)
+    if (arg == "--constraint" && index + 1 < argc)
     {
-      void_text[0] = argv[++index];
-      continue;
-    }
-    if (arg == "--east-void" && index + 1 < argc)
-    {
-      void_text[1] = argv[++index];
-      continue;
-    }
-    if (arg == "--south-void" && index + 1 < argc)
-    {
-      void_text[2] = argv[++index];
-      continue;
-    }
-    if (arg == "--west-void" && index + 1 < argc)
-    {
-      void_text[3] = argv[++index];
+      constraint_text = argv[++index];
       continue;
     }
     if (arg == "--diagram")
@@ -155,12 +133,6 @@ auto main(int argc, char* argv[]) -> int
 
   try
   {
-    std::array<int, single_dummy_solver::kHands> seat_void_suits{};
-    for (int seat = 0; seat < single_dummy_solver::kHands; ++seat)
-    {
-      seat_void_suits[static_cast<std::size_t>(seat)] =
-          parse_optional_void(void_text[static_cast<std::size_t>(seat)]);
-    }
     const auto known = single_dummy_solver::parse_hand(known_text);
     const auto dummy = single_dummy_solver::parse_hand(dummy_text);
     const auto available = single_dummy_solver::parse_hand(available_text);
@@ -175,6 +147,11 @@ auto main(int argc, char* argv[]) -> int
     }
     if (show_diagram)
     {
+      std::optional<std::string_view> constraint_view;
+      if (constraint_text.has_value())
+      {
+        constraint_view = *constraint_text;
+      }
       std::cout << single_dummy_solver::format_position_diagram(
           known,
           dummy,
@@ -182,7 +159,7 @@ auto main(int argc, char* argv[]) -> int
           dummy_seat,
           available,
           denomination,
-          seat_void_suits);
+          constraint_view);
       std::cout << '\n';
     }
     const auto result = single_dummy_solver::solve_single_dummy(
@@ -192,7 +169,7 @@ auto main(int argc, char* argv[]) -> int
         dummy_seat,
         denomination,
         available,
-        seat_void_suits,
+        constraint_text,
         goal,
         thread_count,
         min_significant_rank);

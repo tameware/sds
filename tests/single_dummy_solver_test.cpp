@@ -30,6 +30,8 @@ using single_dummy_solver::build_transposition_position;
 using single_dummy_solver::card_scores_from_future_tricks;
 using single_dummy_solver::AdversarialSplitQuery;
 using single_dummy_solver::distinct_representative_ranks_in_suit;
+using single_dummy_solver::compile_deal_constraint;
+using single_dummy_solver::DealConstraint;
 using single_dummy_solver::enumerate_constrained_opponent_splits;
 using single_dummy_solver::needs_adversarial_split;
 using single_dummy_solver::enumerate_unknown_splits;
@@ -44,12 +46,39 @@ using single_dummy_solver::parse_min_significant_rank;
 using single_dummy_solver::parse_threads;
 using single_dummy_solver::default_thread_count;
 using single_dummy_solver::parse_seat;
-using single_dummy_solver::parse_void_suits;
 using single_dummy_solver::format_position_diagram;
 using single_dummy_solver::format_result;
 using single_dummy_solver::solve_single_dummy;
 using single_dummy_solver::validate_position;
-using single_dummy_solver::validate_seat_voids;
+
+auto empty_base_hands() -> std::array<std::vector<Card>, kHands>
+{
+  return {};
+}
+
+auto enumerate_pool_splits(
+    const std::vector<Card>& pool,
+    int east_slots,
+    int west_slots,
+    int east_void_suits = 0,
+    int west_void_suits = 0,
+    const DealConstraint* constraint = nullptr,
+    int min_significant_rank = 2) -> std::vector<single_dummy_solver::UnknownSplit>
+{
+  return enumerate_constrained_opponent_splits(
+      pool,
+      /*east_hand_size=*/0,
+      /*west_hand_size=*/0,
+      east_slots,
+      west_slots,
+      empty_base_hands(),
+      /*east_seat=*/1,
+      /*west_seat=*/3,
+      east_void_suits,
+      west_void_suits,
+      constraint,
+      min_significant_rank);
+}
 
 auto card(std::string_view text) -> Card
 {
@@ -181,90 +210,89 @@ TEST(SingleDummySolverTest, ValidatePositionRejectsInvalidLayouts)
 TEST(SingleDummySolverTest, ConstrainedSplitsRequireExactSlotCounts)
 {
   const auto pool = parse_hand("Q.A..");
-  const auto splits = enumerate_constrained_opponent_splits(
-      pool,
-      /*east_hand_size=*/0,
-      /*west_hand_size=*/0,
-      /*east_slots=*/1,
-      /*west_slots=*/1);
+  const auto splits = enumerate_pool_splits(pool, /*east_slots=*/1, /*west_slots=*/1);
   EXPECT_EQ(splits.size(), 2u);
 }
 
-TEST(SingleDummySolverTest, ParseVoidSuitsAcceptsCommaOrRunTogether)
+TEST(SingleDummySolverTest, DealConstraintEvaluatesRedealStyleExpressions)
 {
-  EXPECT_EQ(parse_void_suits("S"), 1u << 0);
-  EXPECT_EQ(parse_void_suits("s,h"), (1u << 0) | (1u << 1));
-  EXPECT_EQ(parse_void_suits("SHDC"), (1u << 0) | (1u << 1) | (1u << 2) | (1u << 3));
-  EXPECT_EQ(parse_void_suits(""), 0);
-  EXPECT_THROW(parse_void_suits("X"), std::invalid_argument);
+  const auto constraint = compile_deal_constraint("len(deal.east.spades) == 0");
+  std::array<std::vector<Card>, kHands> hands{};
+  hands[2] = parse_hand("A...");
+  EXPECT_TRUE(constraint.evaluate(hands));
+  hands[1] = parse_hand("Q...");
+  EXPECT_FALSE(constraint.evaluate(hands));
 }
 
-TEST(SingleDummySolverTest, InitialEastVoidSpadesAppliesToRepartitions)
+TEST(SingleDummySolverTest, DealConstraintSupportsHcpComparison)
 {
-  const auto without_void = solve_single_dummy(
+  const auto constraint = compile_deal_constraint("deal.west.hcp >= 8");
+  std::array<std::vector<Card>, kHands> hands{};
+  hands[3] = parse_hand("AKQ...");
+  EXPECT_TRUE(constraint.evaluate(hands));
+  hands[3] = parse_hand(".2..");
+  EXPECT_FALSE(constraint.evaluate(hands));
+}
+
+TEST(SingleDummySolverTest, DealConstraintSupportsBooleanAnd)
+{
+  const auto constraint = compile_deal_constraint(
+      "len(deal.east.spades) == 0 and len(deal.west.hearts) == 0");
+  std::array<std::vector<Card>, kHands> hands{};
+  hands[1] = parse_hand("..K.");
+  hands[3] = parse_hand("...K");
+  EXPECT_TRUE(constraint.evaluate(hands));
+  hands[1] = parse_hand("Q...");
+  EXPECT_FALSE(constraint.evaluate(hands));
+}
+
+TEST(SingleDummySolverTest, InitialEastConstraintVoidSpadesReducesCombinations)
+{
+  const auto without_constraint = solve_single_dummy(
       parse_hand("A..."),
       parse_hand("K..."),
       /*known_seat=*/2,
       /*dummy_seat=*/0,
       /*denomination=*/0,
       parse_hand("Q.2.."));
-  const auto with_void = solve_single_dummy(
+  const auto with_constraint = solve_single_dummy(
       parse_hand("A..."),
       parse_hand("K..."),
       /*known_seat=*/2,
       /*dummy_seat=*/0,
       /*denomination=*/0,
       parse_hand("Q.2.."),
-      /*seat_void_suits=*/{0, 1u << 0, 0, 0});
+      std::string("len(deal.east.spades) == 0"));
 
-  ASSERT_EQ(without_void.leads.size(), 1u);
-  ASSERT_EQ(with_void.leads.size(), 1u);
-  EXPECT_EQ(without_void.leads[0].min_tricks, 1);
-  EXPECT_EQ(with_void.leads[0].min_tricks, 1);
-  EXPECT_EQ(without_void.combination_count, 2);
-  EXPECT_EQ(with_void.combination_count, 1);
+  ASSERT_EQ(without_constraint.leads.size(), 1u);
+  ASSERT_EQ(with_constraint.leads.size(), 1u);
+  EXPECT_EQ(without_constraint.leads[0].min_tricks, 1);
+  EXPECT_EQ(with_constraint.leads[0].min_tricks, 1);
+  EXPECT_EQ(without_constraint.combination_count, 2);
+  EXPECT_EQ(with_constraint.combination_count, 1);
 }
 
-TEST(SingleDummySolverTest, ValidateSeatVoidsRejectsKnownHandInVoidSuit)
-{
-  std::array<std::vector<Card>, kHands> hands{};
-  hands[2] = parse_hand("K98.3..");
-  EXPECT_THROW(
-      validate_seat_voids(hands, {0, 0, 1u << 0, 0}),
-      std::invalid_argument);
-}
-
-TEST(SingleDummySolverTest, ValidateSeatVoidsRejectsDummyHandInVoidSuit)
-{
-  std::array<std::vector<Card>, kHands> hands{};
-  hands[0] = parse_hand("AJT.2..");
-  EXPECT_THROW(
-      validate_seat_voids(hands, {1u << 1, 0, 0, 0}),
-      std::invalid_argument);
-}
-
-TEST(SingleDummySolverTest, SouthVoidAcceptedWhenHandHasNoCardsInVoidSuit)
-{
-  std::array<int, kHands> seat_void_suits{};
-  seat_void_suits[2] = 1u << 3;  // South void clubs; hand has none
-  const auto result = solve_single_dummy(
-      parse_hand("K98.3.."),
-      parse_hand("AJT.2.."),
-      /*known_seat=*/2,
-      /*dummy_seat=*/0,
-      /*denomination=*/0,
-      parse_hand("Q76543.45.."),
-      seat_void_suits);
-  EXPECT_EQ(result.maximin_value, 3);
-}
-
-TEST(SingleDummySolverTest, ConstrainedSplitsExcludeVoidSuits)
+TEST(SingleDummySolverTest, ConstrainedSplitsFilterByDealConstraint)
 {
   const auto pool = parse_hand("Q.A..");
-  const auto splits = enumerate_constrained_opponent_splits(
+  const auto constraint = compile_deal_constraint("len(deal.east.spades) == 0");
+  const auto splits = enumerate_pool_splits(
       pool,
-      /*east_hand_size=*/0,
-      /*west_hand_size=*/0,
+      /*east_slots=*/1,
+      /*west_slots=*/1,
+      /*east_void_suits=*/0,
+      /*west_void_suits=*/0,
+      &constraint);
+  ASSERT_EQ(splits.size(), 1u);
+  EXPECT_EQ(splits[0].first.front(), card("HA"));
+  EXPECT_EQ(splits[0].second.front(), card("SQ"));
+}
+
+TEST(SingleDummySolverTest, ConstrainedSplitsExcludePlayTimeVoidSuits)
+{
+  const auto pool = parse_hand("Q.A..");
+  const auto splits = enumerate_pool_splits(
+      pool,
       /*east_slots=*/1,
       /*west_slots=*/1,
       /*east_void_suits=*/1u << 0,
@@ -272,6 +300,32 @@ TEST(SingleDummySolverTest, ConstrainedSplitsExcludeVoidSuits)
   ASSERT_EQ(splits.size(), 1u);
   EXPECT_EQ(splits[0].first.front(), card("HA"));
   EXPECT_EQ(splits[0].second.front(), card("SQ"));
+}
+
+TEST(SingleDummySolverTest, RecessedMenaceConstraintMatchesVoidFlagsBehavior)
+{
+  const auto constraint =
+      "len(deal.east.spades) == 0 and len(deal.west.hearts) == 0";
+  const auto without_constraint = solve_single_dummy(
+      parse_hand("K.K.3.A"),
+      parse_hand("..AK2.2"),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/4,
+      parse_hand("A.A.456789."));
+  const auto with_constraint = solve_single_dummy(
+      parse_hand("K.K.3.A"),
+      parse_hand("..AK2.2"),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/4,
+      parse_hand("A.A.456789."),
+      constraint);
+
+  EXPECT_EQ(with_constraint.maximin_value, 4);
+  EXPECT_LT(with_constraint.combination_count, without_constraint.combination_count);
+  EXPECT_EQ(without_constraint.combination_count, 70);
+  EXPECT_EQ(with_constraint.combination_count, 20);
 }
 
 TEST(SingleDummySolverTest, OneCardEndgameWinsTheOnlyTrickWhenLeadingAce)
@@ -812,10 +866,8 @@ TEST(SingleDummySolverTest, FormatPositionDiagramShowsKnownHandsAndAvailablePool
   EXPECT_EQ(diagram.find("Available (East, West):\n  S"), std::string::npos);
 }
 
-TEST(SingleDummySolverTest, FormatPositionDiagramShowsVoidSuits)
+TEST(SingleDummySolverTest, FormatPositionDiagramShowsConstraint)
 {
-  std::array<int, kHands> seat_void_suits{};
-  seat_void_suits[1] = parse_void_suits("H");
   const auto diagram = format_position_diagram(
       parse_hand("K98.3..A"),
       parse_hand("AJT.2..K"),
@@ -823,9 +875,9 @@ TEST(SingleDummySolverTest, FormatPositionDiagramShowsVoidSuits)
       /*dummy_seat=*/0,
       parse_hand("Q765...234567"),
       /*denomination=*/0,
-      seat_void_suits);
+      std::string_view("len(deal.east.spades) == 4"));
 
-  EXPECT_NE(diagram.find("Available (East [void: H], West): "), std::string::npos);
+  EXPECT_NE(diagram.find("Constraint: len(deal.east.spades) == 4"), std::string::npos);
 }
 
 TEST(SingleDummySolverTest, ParseThreadsAcceptsZeroForHardwareConcurrency)
@@ -900,29 +952,20 @@ TEST(SingleDummySolverTest, ParseMinSignificantRankAcceptsValidRanks)
 TEST(SingleDummySolverTest, MinSignificantRankDefaultKeepsLowCardSplitsDistinct)
 {
   const auto pool = parse_hand("32...");
-  const auto splits = enumerate_constrained_opponent_splits(
-      pool,
-      /*east_hand_size=*/0,
-      /*west_hand_size=*/0,
-      /*east_slots=*/1,
-      /*west_slots=*/1,
-      /*east_void_suits=*/0,
-      /*west_void_suits=*/0,
-      /*min_significant_rank=*/2);
+  const auto splits = enumerate_pool_splits(pool, /*east_slots=*/1, /*west_slots=*/1);
   EXPECT_EQ(splits.size(), 2u);
 }
 
 TEST(SingleDummySolverTest, MinSignificantRankMergesInsignificantLowCardSplits)
 {
   const auto pool = parse_hand("32...");
-  const auto splits = enumerate_constrained_opponent_splits(
+  const auto splits = enumerate_pool_splits(
       pool,
-      /*east_hand_size=*/0,
-      /*west_hand_size=*/0,
       /*east_slots=*/1,
       /*west_slots=*/1,
       /*east_void_suits=*/0,
       /*west_void_suits=*/0,
+      /*constraint=*/nullptr,
       /*min_significant_rank=*/7);
   ASSERT_EQ(splits.size(), 1u);
   EXPECT_TRUE(
@@ -932,14 +975,13 @@ TEST(SingleDummySolverTest, MinSignificantRankMergesInsignificantLowCardSplits)
 TEST(SingleDummySolverTest, MinSignificantRankKeepsSignificantCardSplitsDistinct)
 {
   const auto pool = parse_hand("72...");
-  const auto splits = enumerate_constrained_opponent_splits(
+  const auto splits = enumerate_pool_splits(
       pool,
-      /*east_hand_size=*/0,
-      /*west_hand_size=*/0,
       /*east_slots=*/1,
       /*west_slots=*/1,
       /*east_void_suits=*/0,
       /*west_void_suits=*/0,
+      /*constraint=*/nullptr,
       /*min_significant_rank=*/7);
   EXPECT_EQ(splits.size(), 2u);
 }

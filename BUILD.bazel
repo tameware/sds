@@ -55,11 +55,13 @@ SDS_LOCAL_DEFINES = select({
 cc_library(
     name = "single_dummy_solver_lib",
     srcs = [
+        "src/single_dummy_solver/deal_constraints.cpp",
         "src/single_dummy_solver/single_dummy_solver_lib.cpp",
         "src/single_dummy_solver/transposition_table.cpp",
     ],
     hdrs = [
         "src/single_dummy_solver/bridge_types.hpp",
+        "src/single_dummy_solver/deal_constraints.hpp",
         "src/single_dummy_solver/single_dummy_solver.hpp",
         "src/single_dummy_solver/transposition_table.hpp",
     ],

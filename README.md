@@ -22,11 +22,19 @@ bazelisk run //:single_dummy_solver -- \
   --diagram
 ```
 
-Void suits for mid-deal positions: `--north-void`, `--east-void`, `--south-void`,
-and `--west-void` (suit letters `S/H/D/C`, comma-separated or run together).
+Optional opposition constraints use [redeal](https://github.com/anntzer/redeal)-style
+accept expressions with `--constraint EXPR`. For example:
 
-Add `--diagram` to print the known hands, opposition seats, and the shared
-available-card pool before the analysis output.
+```bash
+--constraint "len(deal.east.spades) == 4 and deal.west.hcp >= 8"
+```
+
+Expressions may reference `deal.{north,east,south,west}.{spades,hearts,diamonds,clubs}`,
+`deal.{seat}.hcp`, and `deal.{seat}.shape[index]`, with `len(...)`, comparisons,
+and `and` / `or` / `not`.
+
+Add `--diagram` to print the known hands, opposition seats, the shared
+available-card pool, and any constraint before the analysis output.
 
 After changing `MODULE.bazel`, refresh the lockfile:
 

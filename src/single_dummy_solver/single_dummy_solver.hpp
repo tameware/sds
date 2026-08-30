@@ -17,17 +17,10 @@
 #include <vector>
 
 #include "bridge_types.hpp"
+#include "deal_constraints.hpp"
 
 namespace single_dummy_solver
 {
-
-struct Card
-{
-  int suit;  // 0=spades … 3=clubs
-  int rank;  // 2..14
-
-  auto operator<=>(const Card&) const = default;
-};
 
 struct LeadResult
 {
@@ -73,18 +66,12 @@ auto default_thread_count() -> int;
 
 auto parse_denomination(std::string_view text) -> int;
 
-auto parse_void_suits(std::string_view text) -> int;
-
 auto validate_position(
     const std::vector<Card>& known,
     const std::vector<Card>& dummy,
     int known_seat,
     int dummy_seat,
     const std::vector<Card>& available) -> void;
-
-auto validate_seat_voids(
-    const std::array<std::vector<Card>, kHands>& hands,
-    const std::array<int, kHands>& seat_void_suits) -> void;
 
 auto enumerate_unknown_splits(
     const std::vector<Card>& pool,
@@ -97,8 +84,12 @@ auto enumerate_constrained_opponent_splits(
     int west_hand_size,
     int east_slots,
     int west_slots,
+    const std::array<std::vector<Card>, kHands>& base_hands,
+    int east_seat,
+    int west_seat,
     int east_void_suits = 0,
     int west_void_suits = 0,
+    const DealConstraint* constraint = nullptr,
     int min_significant_rank = 2) -> std::vector<UnknownSplit>;
 
 auto card_scores_from_future_tricks(
@@ -131,7 +122,7 @@ auto solve_single_dummy(
     int dummy_seat,
     int denomination,
     const std::vector<Card>& available,
-    std::array<int, kHands> seat_void_suits = {},
+    std::optional<std::string> constraint = std::nullopt,
     std::optional<int> goal = std::nullopt,
     int thread_count = 0,
     int min_significant_rank = 2) -> SingleDummyResult;
@@ -145,6 +136,6 @@ auto format_position_diagram(
     int dummy_seat,
     const std::vector<Card>& available,
     int denomination,
-    const std::array<int, kHands>& seat_void_suits = {}) -> std::string;
+    std::optional<std::string_view> constraint = std::nullopt) -> std::string;
 
 }  // namespace single_dummy_solver

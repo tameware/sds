@@ -1,10 +1,20 @@
 #pragma once
 
+#include <compare>
+
 namespace single_dummy_solver
 {
 
 constexpr int kHands = 4;  // N, E, S, W
 constexpr int kSuits = 4;  // S, H, D, C
+
+struct Card
+{
+  int suit;  // 0=spades … 3=clubs
+  int rank;  // 2..14
+
+  auto operator<=>(const Card&) const = default;
+};
 
 // Rank bitmasks used in FutureTricks.equals (DDS encoding: one bit per rank 2..14,
 // then shifted left by 2 when stored in equals[]).

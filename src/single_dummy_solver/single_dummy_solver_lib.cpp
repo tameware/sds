@@ -25,6 +25,7 @@
 #include <utility>
 #include <vector>
 
+#include "deal_constraints.hpp"
 #include "transposition_table.hpp"
 
 namespace single_dummy_solver
@@ -36,8 +37,12 @@ auto enumerate_constrained_opponent_splits(
     int west_hand_size,
     int east_slots,
     int west_slots,
+    const std::array<std::vector<Card>, kHands>& base_hands,
+    int east_seat,
+    int west_seat,
     int east_void_suits,
     int west_void_suits,
+    const DealConstraint* constraint,
     int min_significant_rank) -> std::vector<UnknownSplit>;
 
 namespace
@@ -70,6 +75,7 @@ struct GameState
   std::array<int, kHands> void_suits{};
   std::array<int, kSuits> win_ranks{};
   int min_significant_rank = 2;
+  DealConstraint deal_constraint;
 };
 
 struct EvaluationStats
@@ -397,22 +403,6 @@ auto hand_to_suit_fields(const std::vector<Card>& hand) -> std::array<std::strin
   return fields;
 }
 
-auto append_void_suffix(int void_mask, std::ostringstream& out) -> void
-{
-  if (void_mask == 0)
-  {
-    return;
-  }
-  out << " [void:";
-  for (int suit = 0; suit < kSuits; ++suit)
-  {
-    if ((void_mask & (1 << suit)) != 0)
-    {
-      out << ' ' << SuitChars[static_cast<std::size_t>(suit)];
-    }
-  }
-  out << ']';
-}
 
 auto append_hand_lines(
     const std::array<std::string, kSuits>& fields,
@@ -659,14 +649,23 @@ auto cards_eligible_for_seat(
 
 auto adversarial_splits(const GameState& state) -> std::vector<UnknownSplit>
 {
+  auto base_hands = state.hands;
+  base_hands[static_cast<std::size_t>(state.east_seat)].clear();
+  base_hands[static_cast<std::size_t>(state.west_seat)].clear();
+  const DealConstraint* constraint =
+      state.deal_constraint.is_active() ? &state.deal_constraint : nullptr;
   return enumerate_constrained_opponent_splits(
       gather_opponent_cards(state),
       /*east_hand_size=*/0,
       /*west_hand_size=*/0,
       state.east_slots,
       state.west_slots,
+      base_hands,
+      state.east_seat,
+      state.west_seat,
       state.void_suits[static_cast<std::size_t>(state.east_seat)],
       state.void_suits[static_cast<std::size_t>(state.west_seat)],
+      constraint,
       state.min_significant_rank);
 }
 
@@ -836,7 +835,7 @@ auto make_initial_state(
     int dummy_seat,
     int denomination,
     const std::vector<Card>& available,
-    const std::array<int, kHands>& seat_void_suits,
+    const DealConstraint& deal_constraint,
     int min_significant_rank) -> GameState
 {
   const auto [east_seat, west_seat] = opponent_seats(known_seat, dummy_seat);
@@ -853,7 +852,7 @@ auto make_initial_state(
   state.partnership_tricks = 0;
   state.east_slots = static_cast<int>(known.size());
   state.west_slots = static_cast<int>(known.size());
-  state.void_suits = seat_void_suits;
+  state.deal_constraint = deal_constraint;
   state.min_significant_rank = min_significant_rank;
   return state;
 }
@@ -1139,27 +1138,6 @@ auto parse_denomination(std::string_view text) -> int
   throw std::invalid_argument("invalid denomination (use S/H/D/C/NT)");
 }
 
-auto parse_void_suits(std::string_view text) -> int
-{
-  int mask = 0;
-  for (const char ch : text)
-  {
-    if (ch == ',' || std::isspace(static_cast<unsigned char>(ch)))
-    {
-      continue;
-    }
-    const auto upper = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
-    const auto pos = SuitChars.find(upper);
-    if (pos == std::string_view::npos)
-    {
-      throw std::invalid_argument(
-          "invalid void suit (use S/H/D/C, comma-separated)");
-    }
-    mask |= 1 << static_cast<int>(pos);
-  }
-  return mask;
-}
-
 auto validate_position(
     const std::vector<Card>& known,
     const std::vector<Card>& dummy,
@@ -1205,26 +1183,17 @@ auto validate_position(
   }
 }
 
-auto validate_seat_voids(
-    const std::array<std::vector<Card>, kHands>& hands,
-    const std::array<int, kHands>& seat_void_suits) -> void
+auto hands_for_opponent_split(
+    const std::array<std::vector<Card>, kHands>& base_hands,
+    int east_seat,
+    int west_seat,
+    const std::vector<Card>& east_cards,
+    const std::vector<Card>& west_cards) -> std::array<std::vector<Card>, kHands>
 {
-  for (int seat = 0; seat < kHands; ++seat)
-  {
-    if (seat_void_suits[static_cast<std::size_t>(seat)] == 0)
-    {
-      continue;
-    }
-    for (const auto& card : hands[static_cast<std::size_t>(seat)])
-    {
-      if ((seat_void_suits[static_cast<std::size_t>(seat)] & (1 << card.suit)) != 0)
-      {
-        throw std::invalid_argument(
-            "hand contains card in declared void suit for seat "
-            + std::string(1, SeatChars[static_cast<std::size_t>(seat)]));
-      }
-    }
-  }
+  auto hands = base_hands;
+  hands[static_cast<std::size_t>(east_seat)] = east_cards;
+  hands[static_cast<std::size_t>(west_seat)] = west_cards;
+  return hands;
 }
 
 auto enumerate_unknown_splits(
@@ -1232,14 +1201,19 @@ auto enumerate_unknown_splits(
     int hand_size,
     int min_significant_rank) -> std::vector<UnknownSplit>
 {
+  std::array<std::vector<Card>, kHands> base_hands{};
   return enumerate_constrained_opponent_splits(
       pool,
       /*east_hand_size=*/0,
       /*west_hand_size=*/0,
       /*east_slots=*/hand_size,
       /*west_slots=*/hand_size,
+      base_hands,
+      /*east_seat=*/1,
+      /*west_seat=*/3,
       /*east_void_suits=*/0,
       /*west_void_suits=*/0,
+      /*constraint=*/nullptr,
       min_significant_rank);
 }
 
@@ -1249,8 +1223,12 @@ auto enumerate_constrained_opponent_splits(
     int west_hand_size,
     int east_slots,
     int west_slots,
+    const std::array<std::vector<Card>, kHands>& base_hands,
+    int east_seat,
+    int west_seat,
     int east_void_suits,
     int west_void_suits,
+    const DealConstraint* constraint,
     int min_significant_rank) -> std::vector<UnknownSplit>
 {
   if (min_significant_rank < 2 || min_significant_rank > 14)
@@ -1301,6 +1279,15 @@ auto enumerate_constrained_opponent_splits(
             }))
     {
       continue;
+    }
+    if (constraint != nullptr)
+    {
+      const auto hands = hands_for_opponent_split(
+          base_hands, east_seat, west_seat, east_cards, west_cards);
+      if (!constraint->evaluate(hands))
+      {
+        continue;
+      }
     }
     splits.push_back(UnknownSplit{east_cards, west_cards});
   }
@@ -1365,7 +1352,7 @@ auto evaluate_lead(
     int dummy_seat,
     int denomination,
     const std::vector<Card>& available,
-    const std::array<int, kHands>& seat_void_suits,
+    const DealConstraint& deal_constraint,
     const std::vector<UnknownSplit>& root_splits,
     std::optional<int> goal,
     int min_significant_rank) -> LeadEvaluation
@@ -1380,7 +1367,7 @@ auto evaluate_lead(
       dummy_seat,
       denomination,
       available,
-      seat_void_suits,
+      deal_constraint,
       min_significant_rank);
   remove_card(state.hands[static_cast<std::size_t>(known_seat)], lead_card);
   state.trick.push_back(PlayedCard{known_seat, lead_card});
@@ -1422,12 +1409,15 @@ auto solve_single_dummy(
     int dummy_seat,
     int denomination,
     const std::vector<Card>& available,
-    std::array<int, kHands> seat_void_suits,
+    std::optional<std::string> constraint_text,
     std::optional<int> goal,
     int thread_count,
     int min_significant_rank) -> SingleDummyResult
 {
   validate_position(known, dummy, known_seat, dummy_seat, available);
+  const DealConstraint deal_constraint = constraint_text.has_value()
+      ? compile_deal_constraint(*constraint_text)
+      : DealConstraint{};
   if (denomination < 0 || denomination > 4)
   {
     throw std::invalid_argument("denomination must be in 0..4");
@@ -1452,22 +1442,27 @@ auto solve_single_dummy(
   std::array<std::vector<Card>, kHands> hands{};
   hands[static_cast<std::size_t>(known_seat)] = known;
   hands[static_cast<std::size_t>(dummy_seat)] = dummy;
-  validate_seat_voids(hands, seat_void_suits);
 
   const auto [east_seat, west_seat] = opponent_seats(known_seat, dummy_seat);
+  const DealConstraint* constraint =
+      deal_constraint.is_active() ? &deal_constraint : nullptr;
   const auto root_splits = enumerate_constrained_opponent_splits(
       available,
       /*east_hand_size=*/0,
       /*west_hand_size=*/0,
       static_cast<int>(known.size()),
       static_cast<int>(known.size()),
-      seat_void_suits[static_cast<std::size_t>(east_seat)],
-      seat_void_suits[static_cast<std::size_t>(west_seat)],
+      hands,
+      east_seat,
+      west_seat,
+      /*east_void_suits=*/0,
+      /*west_void_suits=*/0,
+      constraint,
       min_significant_rank);
   if (root_splits.empty())
   {
     throw std::invalid_argument(
-        "no legal initial opposition split for available cards and void suits");
+        "no legal initial opposition split for available cards and constraint");
   }
 
   std::map<Card, int> values;
@@ -1489,7 +1484,7 @@ auto solve_single_dummy(
         dummy_seat,
         denomination,
         available,
-        seat_void_suits,
+        deal_constraint,
         root_splits,
         goal,
         min_significant_rank);
@@ -1648,7 +1643,7 @@ auto format_position_diagram(
     int dummy_seat,
     const std::vector<Card>& available,
     int denomination,
-    const std::array<int, kHands>& seat_void_suits) -> std::string
+    std::optional<std::string_view> constraint) -> std::string
 {
   static constexpr std::array<std::string_view, kHands> seat_names =
       {"North", "East", "South", "West"};
@@ -1687,9 +1682,6 @@ auto format_position_diagram(
     {
       out << " (dummy)";
     }
-    append_void_suffix(
-        seat_void_suits[static_cast<std::size_t>(seat)],
-        out);
     out << '\n';
 
     if (seat == known_seat)
@@ -1711,11 +1703,12 @@ auto format_position_diagram(
       out << ", ";
     }
     out << seat_names[static_cast<std::size_t>(opposition[index])];
-    append_void_suffix(
-        seat_void_suits[static_cast<std::size_t>(opposition[index])],
-        out);
   }
   out << "): " << format_pbn_suit_fields(available_fields) << '\n';
+  if (constraint.has_value())
+  {
+    out << "Constraint: " << *constraint << '\n';
+  }
   return out.str();
 }
 
