@@ -11,13 +11,17 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cctype>
+#include <exception>
 #include <limits>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -957,6 +961,50 @@ auto parse_goal(std::string_view text) -> int
   }
 }
 
+auto parse_threads(std::string_view text) -> int
+{
+  if (text.empty())
+  {
+    throw std::invalid_argument("thread count must be an integer");
+  }
+  if (text == "0")
+  {
+    return default_thread_count();
+  }
+  try
+  {
+    std::size_t consumed = 0;
+    const int value = std::stoi(std::string(text), &consumed);
+    if (consumed != text.size())
+    {
+      throw std::invalid_argument("thread count must be an integer");
+    }
+    if (value < 1)
+    {
+      throw std::invalid_argument("thread count must be at least 1");
+    }
+    return value;
+  }
+  catch (const std::invalid_argument& ex)
+  {
+    if (std::string_view(ex.what()) == "thread count must be at least 1")
+    {
+      throw;
+    }
+    throw std::invalid_argument("thread count must be an integer");
+  }
+  catch (const std::out_of_range&)
+  {
+    throw std::invalid_argument("thread count must be an integer");
+  }
+}
+
+auto default_thread_count() -> int
+{
+  const unsigned hardware = std::thread::hardware_concurrency();
+  return hardware == 0 ? 1 : static_cast<int>(hardware);
+}
+
 auto parse_denomination(std::string_view text) -> int
 {
   std::string key(text);
@@ -1189,6 +1237,69 @@ auto card_scores_from_future_tricks(
   return scores;
 }
 
+struct LeadEvaluation
+{
+  Card lead_card{};
+  int tricks = 0;
+  EvaluationStats stats{};
+};
+
+auto evaluate_lead(
+    const Card& lead_card,
+    const std::vector<Card>& known,
+    const std::vector<Card>& dummy,
+    int known_seat,
+    int dummy_seat,
+    int denomination,
+    const std::vector<Card>& available,
+    const std::array<int, kHands>& seat_void_suits,
+    const std::vector<UnknownSplit>& root_splits,
+    std::optional<int> goal) -> LeadEvaluation
+{
+  LeadEvaluation result{};
+  result.lead_card = lead_card;
+  result.stats.goal = goal;
+  auto state = make_initial_state(
+      known,
+      dummy,
+      known_seat,
+      dummy_seat,
+      denomination,
+      available,
+      seat_void_suits);
+  remove_card(state.hands[static_cast<std::size_t>(known_seat)], lead_card);
+  state.trick.push_back(PlayedCard{known_seat, lead_card});
+  if (state.trick.size() == 4)
+  {
+    const int winner = trick_winner(state.trick, state.denomination, state.leader);
+    if (is_partnership_seat(winner, state.known_seat, state.dummy_seat))
+    {
+      ++state.partnership_tricks;
+    }
+    state.leader = winner;
+    state.trick.clear();
+  }
+
+  int tricks = std::numeric_limits<int>::max();
+  for (const auto& split : root_splits)
+  {
+    const auto split_state = apply_opponent_split(state, split);
+    tricks = std::min(
+        tricks,
+        evaluate_recursive(
+            split_state,
+            result.stats,
+            std::numeric_limits<int>::min(),
+            std::numeric_limits<int>::max()));
+    if (try_goal_cutoff(result.stats, tricks))
+    {
+      break;
+    }
+  }
+  result.tricks = tricks;
+  return result;
+}
+
 auto solve_single_dummy(
     const std::vector<Card>& known,
     const std::vector<Card>& dummy,
@@ -1197,7 +1308,8 @@ auto solve_single_dummy(
     int denomination,
     const std::vector<Card>& available,
     std::array<int, kHands> seat_void_suits,
-    std::optional<int> goal) -> SingleDummyResult
+    std::optional<int> goal,
+    int thread_count) -> SingleDummyResult
 {
   validate_position(known, dummy, known_seat, dummy_seat, available);
   if (denomination < 0 || denomination > 4)
@@ -1207,6 +1319,14 @@ auto solve_single_dummy(
   if (goal.has_value() && (*goal < 0 || *goal > 13))
   {
     throw std::invalid_argument("goal must be in 0..13");
+  }
+  if (thread_count == 0)
+  {
+    thread_count = default_thread_count();
+  }
+  if (thread_count < 1)
+  {
+    throw std::invalid_argument("thread count must be at least 1");
   }
 
   std::array<std::vector<Card>, kHands> hands{};
@@ -1238,56 +1358,84 @@ auto solve_single_dummy(
   int total_transposition_bound_cutoffs = 0;
   int total_goal_cutoffs = 0;
 
-  for (const auto& lead_card : known)
-  {
-    EvaluationStats stats{};
-    stats.goal = goal;
-    auto state = make_initial_state(
+  std::vector<LeadEvaluation> lead_results(known.size());
+  const auto evaluate_index = [&](std::size_t index) {
+    lead_results[index] = evaluate_lead(
+        known[index],
         known,
         dummy,
         known_seat,
         dummy_seat,
         denomination,
         available,
-        seat_void_suits);
-    remove_card(state.hands[static_cast<std::size_t>(known_seat)], lead_card);
-    state.trick.push_back(PlayedCard{known_seat, lead_card});
-    if (state.trick.size() == 4)
-    {
-      const int winner = trick_winner(state.trick, state.denomination, state.leader);
-      if (is_partnership_seat(winner, state.known_seat, state.dummy_seat))
-      {
-        ++state.partnership_tricks;
-      }
-      state.leader = winner;
-      state.trick.clear();
-    }
+        seat_void_suits,
+        root_splits,
+        goal);
+  };
 
-    int tricks = std::numeric_limits<int>::max();
-    for (const auto& split : root_splits)
+  if (thread_count == 1 || known.size() <= 1)
+  {
+    for (std::size_t index = 0; index < known.size(); ++index)
     {
-      const auto split_state = apply_opponent_split(state, split);
-      tricks = std::min(
-          tricks,
-          evaluate_recursive(
-              split_state,
-              stats,
-              std::numeric_limits<int>::min(),
-              std::numeric_limits<int>::max()));
-      if (try_goal_cutoff(stats, tricks))
-      {
-        break;
-      }
+      evaluate_index(index);
     }
-    total_opposition_splits += stats.opposition_split_evaluations;
-    total_alpha_beta_cutoffs += stats.alpha_beta_cutoffs;
-    total_isomorphism_skipped += stats.isomorphism_skipped_moves;
-    total_transposition_hits += stats.transposition_table.hits();
+  }
+  else
+  {
+    const int workers = std::min(
+        thread_count,
+        static_cast<int>(known.size()));
+    std::atomic<std::size_t> next_index{0};
+    std::exception_ptr error;
+    std::mutex error_mutex;
+    std::vector<std::thread> worker_threads;
+    worker_threads.reserve(static_cast<std::size_t>(workers));
+    for (int worker = 0; worker < workers; ++worker)
+    {
+      worker_threads.emplace_back([&]() {
+        while (true)
+        {
+          const std::size_t index = next_index.fetch_add(1);
+          if (index >= known.size())
+          {
+            return;
+          }
+          try
+          {
+            evaluate_index(index);
+          }
+          catch (...)
+          {
+            const std::lock_guard lock(error_mutex);
+            if (!error)
+            {
+              error = std::current_exception();
+            }
+          }
+        }
+      });
+    }
+    for (auto& worker_thread : worker_threads)
+    {
+      worker_thread.join();
+    }
+    if (error)
+    {
+      std::rethrow_exception(error);
+    }
+  }
+
+  for (const auto& lead_result : lead_results)
+  {
+    total_opposition_splits += lead_result.stats.opposition_split_evaluations;
+    total_alpha_beta_cutoffs += lead_result.stats.alpha_beta_cutoffs;
+    total_isomorphism_skipped += lead_result.stats.isomorphism_skipped_moves;
+    total_transposition_hits += lead_result.stats.transposition_table.hits();
     total_transposition_bound_cutoffs +=
-        stats.transposition_table.bound_cutoffs();
-    total_goal_cutoffs += stats.goal_cutoffs;
-    values[lead_card] = tricks;
-    matrix.push_back({{lead_card, tricks}});
+        lead_result.stats.transposition_table.bound_cutoffs();
+    total_goal_cutoffs += lead_result.stats.goal_cutoffs;
+    values[lead_result.lead_card] = lead_result.tricks;
+    matrix.push_back({{lead_result.lead_card, lead_result.tricks}});
   }
 
   SingleDummyResult result{};

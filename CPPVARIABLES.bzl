@@ -54,5 +54,7 @@ SDS_BASE_CPPOPTS = select({
 SDS_LINKOPTS = select({
     "//:build_macos": ["-flto=thin"],
     "//:debug_build_macos": [],
+    "//:build_linux": ["-pthread"],
+    "//:debug_build_linux": ["-pthread"],
     "//conditions:default": [],
 })

@@ -47,12 +47,15 @@ def solver_command(
     *,
     detail: bool = False,
     goal: int | None = None,
+    threads: int | None = None,
 ) -> list[str]:
     args = split_deal_args(deal_line)
     if detail:
         args.append("--diagram")
     if goal is not None:
         args.extend(["--goal", str(goal)])
+    if threads is not None:
+        args.extend(["--threads", str(threads)])
     return [str(binary), *args]
 
 
@@ -70,9 +73,16 @@ def run_deal(
     *,
     detail: bool = False,
     goal: int | None = None,
+    threads: int | None = None,
 ) -> float:
     start = time.perf_counter()
-    command = solver_command(binary, deal_line, detail=detail, goal=goal)
+    command = solver_command(
+        binary,
+        deal_line,
+        detail=detail,
+        goal=goal,
+        threads=threads,
+    )
     if detail:
         subprocess.run(command, check=True, text=True)
     else:
@@ -104,6 +114,13 @@ def format_timing_summary(stats: dict[str, float | int]) -> str:
         f"median: {stats['median']:.1f} s",
     ]
     return "\n".join(lines)
+
+
+def parse_thread_count(value: str) -> int:
+    thread_count = int(value)
+    if thread_count < 0:
+        raise argparse.ArgumentTypeError("thread count must be non-negative")
+    return thread_count
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -140,6 +157,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         metavar="TRICKS",
         help="pass --goal TRICKS to single_dummy_solver for each deal",
     )
+    parser.add_argument(
+        "--threads",
+        type=parse_thread_count,
+        metavar="N",
+        help=(
+            "pass --threads N to single_dummy_solver for each deal "
+            "(0 selects hardware concurrency; default when omitted)"
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -149,7 +175,13 @@ def main(argv: list[str] | None = None) -> int:
         build_solver()
     deals = parse_deal_lines(args.hand_list)
     times = [
-        run_deal(args.binary, deal_line, detail=args.detail, goal=args.goal)
+        run_deal(
+            args.binary,
+            deal_line,
+            detail=args.detail,
+            goal=args.goal,
+            threads=args.threads,
+        )
         for deal_line in deals
     ]
     print(format_timing_summary(summarize_times(times)))

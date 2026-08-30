@@ -40,6 +40,8 @@ using single_dummy_solver::parse_card;
 using single_dummy_solver::parse_denomination;
 using single_dummy_solver::parse_goal;
 using single_dummy_solver::parse_hand;
+using single_dummy_solver::parse_threads;
+using single_dummy_solver::default_thread_count;
 using single_dummy_solver::parse_seat;
 using single_dummy_solver::parse_void_suits;
 using single_dummy_solver::format_position_diagram;
@@ -782,6 +784,64 @@ TEST(SingleDummySolverTest, FormatPositionDiagramShowsVoidSuits)
       seat_void_suits);
 
   EXPECT_NE(diagram.find("East (opposition) [void: H]"), std::string::npos);
+}
+
+TEST(SingleDummySolverTest, ParseThreadsAcceptsZeroForHardwareConcurrency)
+{
+  EXPECT_EQ(parse_threads("0"), default_thread_count());
+  EXPECT_EQ(parse_threads("1"), 1);
+  EXPECT_EQ(parse_threads("4"), 4);
+  EXPECT_THROW(parse_threads("abc"), std::invalid_argument);
+  EXPECT_THROW(parse_threads("-1"), std::invalid_argument);
+}
+
+TEST(SingleDummySolverTest, DefaultThreadCountMatchesHardwareConcurrencyOrOne)
+{
+  EXPECT_EQ(default_thread_count(), parse_threads("0"));
+  EXPECT_GE(default_thread_count(), 1);
+}
+
+TEST(SingleDummySolverTest, DefaultThreadCountSolveMatchesSingleThreadedResults)
+{
+  const auto known = parse_hand("K98.3..");
+  const auto dummy = parse_hand("AJT.2..");
+  const auto available = parse_hand("Q76543.45..");
+  const auto single = solve_single_dummy(
+      known,
+      dummy,
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/0,
+      available,
+      {},
+      std::nullopt,
+      /*thread_count=*/1);
+  const auto multi = solve_single_dummy(
+      known,
+      dummy,
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/0,
+      available,
+      {},
+      std::nullopt,
+      /*thread_count=*/0);
+
+  EXPECT_EQ(multi.maximin_value, single.maximin_value);
+  EXPECT_EQ(multi.maximin_cards, single.maximin_cards);
+  ASSERT_EQ(multi.leads.size(), single.leads.size());
+  for (const auto& lead : single.leads)
+  {
+    const auto it = std::find_if(
+        multi.leads.begin(),
+        multi.leads.end(),
+        [&](const auto& candidate) { return candidate.card == lead.card; });
+    ASSERT_NE(it, multi.leads.end());
+    EXPECT_EQ(it->min_tricks, lead.min_tricks);
+  }
+  EXPECT_EQ(
+      multi.opposition_split_evaluations,
+      single.opposition_split_evaluations);
 }
 
 }  // namespace

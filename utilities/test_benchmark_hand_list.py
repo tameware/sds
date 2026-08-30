@@ -140,6 +140,57 @@ class BenchmarkHandListTest(unittest.TestCase):
         args = parse_args(["hands/list3_4_cards.txt", "--goal", "4"])
         self.assertEqual(args.goal, 4)
 
+    def test_solver_command_omits_threads_when_not_set(self):
+        from benchmark_hand_list import solver_command
+
+        command = solver_command(
+            Path("/tmp/single_dummy_solver"),
+            "--known A... --known-seat S --dummy K... --dummy-seat N",
+        )
+        self.assertNotIn("--threads", command)
+
+    def test_solver_command_appends_threads_when_set(self):
+        from benchmark_hand_list import solver_command
+
+        command = solver_command(
+            Path("/tmp/single_dummy_solver"),
+            "--known A... --known-seat S --dummy K... --dummy-seat N",
+            threads=0,
+        )
+        self.assertEqual(command[-2:], ["--threads", "0"])
+
+        command = solver_command(
+            Path("/tmp/single_dummy_solver"),
+            "--known A... --known-seat S --dummy K... --dummy-seat N",
+            threads=4,
+        )
+        self.assertEqual(command[-2:], ["--threads", "4"])
+
+    def test_run_deal_with_threads_forwards_threads_flag(self):
+        from benchmark_hand_list import run_deal
+
+        binary = Path("/tmp/single_dummy_solver")
+        with mock.patch("benchmark_hand_list.subprocess.run") as run_mock:
+            run_mock.return_value = mock.Mock(returncode=0)
+            with mock.patch("benchmark_hand_list.time.perf_counter", side_effect=[1.0, 2.0]):
+                run_deal(binary, "--known A... --known-seat S", threads=4)
+        self.assertEqual(run_mock.call_args.args[0][-2:], ["--threads", "4"])
+
+    def test_parse_args_accepts_threads_flag(self):
+        from benchmark_hand_list import parse_args
+
+        args = parse_args(["hands/list3_4_cards.txt", "--threads", "0"])
+        self.assertEqual(args.threads, 0)
+
+        args = parse_args(["hands/list3_4_cards.txt", "--threads", "4"])
+        self.assertEqual(args.threads, 4)
+
+    def test_parse_args_rejects_negative_threads(self):
+        from benchmark_hand_list import parse_args
+
+        with self.assertRaises(SystemExit):
+            parse_args(["hands/list3_4_cards.txt", "--threads", "-1"])
+
 
 if __name__ == "__main__":
     unittest.main()

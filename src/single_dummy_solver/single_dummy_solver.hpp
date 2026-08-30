@@ -65,6 +65,10 @@ auto parse_seat(std::string_view text) -> int;
 
 auto parse_goal(std::string_view text) -> int;
 
+auto parse_threads(std::string_view text) -> int;
+
+auto default_thread_count() -> int;
+
 auto parse_denomination(std::string_view text) -> int;
 
 auto parse_void_suits(std::string_view text) -> int;
@@ -124,7 +128,8 @@ auto solve_single_dummy(
     int denomination,
     const std::vector<Card>& available,
     std::array<int, kHands> seat_void_suits = {},
-    std::optional<int> goal = std::nullopt) -> SingleDummyResult;
+    std::optional<int> goal = std::nullopt,
+    int thread_count = 0) -> SingleDummyResult;
 
 auto format_result(const SingleDummyResult& result) -> std::string;
 

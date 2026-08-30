@@ -24,7 +24,8 @@ void print_usage()
       << "Usage: single_dummy_solver --known HAND --known-seat SEAT "
          "--dummy HAND --dummy-seat SEAT --available HAND --trump DENOM "
          "[--north-void SUITS] [--east-void SUITS] [--south-void SUITS] "
-         "[--west-void SUITS] [--diagram] [--goal TRICKS]\n"
+         "[--west-void SUITS] [--diagram] [--goal TRICKS] [--threads N]\n"
+      << "  N=0 selects hardware concurrency (default).\n"
       << "  Hands use PBN suit fields (e.g. AJT.2..).\n"
       << "  Seats are N/E/S/W; denomination is S/H/D/C/NT.\n"
       << "  Void suits use S/H/D/C, comma-separated or run together (e.g. S,H "
@@ -48,6 +49,7 @@ auto main(int argc, char* argv[]) -> int
   std::string denomination_text;
   bool show_diagram = false;
   std::optional<std::string> goal_text;
+  int thread_count = 0;
   std::array<std::string, single_dummy_solver::kHands> void_text{};
 
   for (int index = 1; index < argc; ++index)
@@ -118,6 +120,11 @@ auto main(int argc, char* argv[]) -> int
       goal_text = argv[++index];
       continue;
     }
+    if (arg == "--threads" && index + 1 < argc)
+    {
+      thread_count = single_dummy_solver::parse_threads(argv[++index]);
+      continue;
+    }
     std::cerr << "Unknown or incomplete argument: " << arg << '\n';
     print_usage();
     return 1;
@@ -171,7 +178,8 @@ auto main(int argc, char* argv[]) -> int
         denomination,
         available,
         seat_void_suits,
-        goal);
+        goal,
+        thread_count);
     std::cout << single_dummy_solver::format_result(result);
     return 0;
   }
