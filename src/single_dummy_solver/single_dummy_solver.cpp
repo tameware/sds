@@ -23,14 +23,16 @@ void print_usage()
       << "Usage: single_dummy_solver --known HAND --known-seat SEAT "
          "--dummy HAND --dummy-seat SEAT [--available HAND] --trump DENOM "
          "[--constraint EXPR] [--diagram] [--info] [--goal TRICKS] [--threads N] "
-         "[--min-significant-rank RANK]\n"
+         "[--min-significant-rank RANK] [--lead SEATCARD]\n"
       << "  N=0 selects hardware concurrency (default).\n"
       << "  RANK=2..14 or rank character; default 2 treats every card as significant.\n"
       << "  Hands use PBN suit fields (e.g. AJT.2..).\n"
       << "  Omit --available when known and dummy each hold 13 cards.\n"
       << "  Seats are N/E/S/W; denomination is S/H/D/C/NT.\n"
       << "  CONSTRAINT is a redeal-style Python expression on deal.north/east/"
-         "south/west (e.g. A in deal.east.spades and deal.west.hcp >= 8).\n";
+         "south/west (e.g. A in deal.east.spades and deal.west.hcp >= 8).\n"
+      << "  LEAD is opening lead as seat plus card (e.g. WH4). Results list legal "
+         "follows for the first partnership hand to play on that trick.\n";
 }
 
 }  // namespace
@@ -47,6 +49,7 @@ auto main(int argc, char* argv[]) -> int
   bool show_info = false;
   std::optional<std::string> goal_text;
   std::optional<std::string> constraint_text;
+  std::optional<std::string> lead_text;
   int thread_count = 0;
   int min_significant_rank = 2;
 
@@ -113,6 +116,11 @@ auto main(int argc, char* argv[]) -> int
       thread_count = single_dummy_solver::parse_threads(argv[++index]);
       continue;
     }
+    if (arg == "--lead" && index + 1 < argc)
+    {
+      lead_text = argv[++index];
+      continue;
+    }
     if (arg == "--min-significant-rank" && index + 1 < argc)
     {
       min_significant_rank =
@@ -154,6 +162,11 @@ auto main(int argc, char* argv[]) -> int
       {
         constraint_view = *constraint_text;
       }
+      std::optional<single_dummy_solver::OpeningLead> opening_lead;
+      if (lead_text.has_value())
+      {
+        opening_lead = single_dummy_solver::parse_opening_lead(*lead_text);
+      }
       std::cout << single_dummy_solver::format_position_diagram(
           known,
           dummy,
@@ -161,8 +174,14 @@ auto main(int argc, char* argv[]) -> int
           dummy_seat,
           available,
           denomination,
-          constraint_view);
+          constraint_view,
+          opening_lead);
       std::cout << '\n';
+    }
+    std::optional<single_dummy_solver::OpeningLead> opening_lead;
+    if (lead_text.has_value())
+    {
+      opening_lead = single_dummy_solver::parse_opening_lead(*lead_text);
     }
     const auto result = single_dummy_solver::solve_single_dummy(
         known,
@@ -174,7 +193,8 @@ auto main(int argc, char* argv[]) -> int
         constraint_text,
         goal,
         thread_count,
-        min_significant_rank);
+        min_significant_rank,
+        opening_lead);
     std::cout << single_dummy_solver::format_result(result, show_info);
     return 0;
   }

@@ -44,7 +44,8 @@ auto enumerate_constrained_opponent_splits(
     int west_void_suits,
     const DealConstraint* constraint,
     const DealConstraint* pin_constraint,
-    int min_significant_rank) -> std::vector<UnknownSplit>;
+    int min_significant_rank,
+    const std::vector<DealConstraintPin>& extra_pins) -> std::vector<UnknownSplit>;
 
 namespace
 {
@@ -112,6 +113,9 @@ struct GameState
   std::array<int, kSuits> win_ranks{};
   int min_significant_rank = 2;
   DealConstraint deal_constraint;
+  bool force_next_play = false;
+  int forced_play_seat = -1;
+  Card forced_play{};
 };
 
 struct EvaluationStats
@@ -745,6 +749,18 @@ auto evaluate_moves(
 {
   const int seat = current_player(state);
   stats.isomorphism_skipped_moves += count_isomorphism_skipped(state, seat);
+  if (state.force_next_play && seat == state.forced_play_seat)
+  {
+    auto next_state = state;
+    next_state.force_next_play = false;
+    next_state.forced_play_seat = -1;
+    const int value = evaluate_recursive(
+        apply_play(next_state, state.forced_play),
+        stats,
+        alpha,
+        beta);
+    return value;
+  }
   const auto moves = distinct_legal_cards(state, seat);
   if (moves.empty())
   {
@@ -1009,6 +1025,18 @@ auto parse_card(std::string_view text) -> Card
       static_cast<int>(suit_pos),
       char_to_rank(text[1]),
   };
+}
+
+auto parse_opening_lead(std::string_view text) -> OpeningLead
+{
+  if (text.size() < 3)
+  {
+    throw std::invalid_argument("opening lead must be seat plus card (e.g. WH4)");
+  }
+  OpeningLead lead{};
+  lead.seat = parse_seat(text.substr(0, 1));
+  lead.card = parse_card(text.substr(1));
+  return lead;
 }
 
 auto parse_hand(std::string_view text) -> std::vector<Card>
@@ -1297,6 +1325,95 @@ auto validate_position(
   }
 }
 
+auto validate_opening_lead(
+    const OpeningLead& opening_lead,
+    const std::vector<Card>& known,
+    const std::vector<Card>& dummy,
+    int known_seat,
+    int dummy_seat,
+    const std::vector<Card>& available) -> void
+{
+  const auto contains = [](const std::vector<Card>& cards, const Card& target) {
+    return std::find(cards.begin(), cards.end(), target) != cards.end();
+  };
+  if (opening_lead.seat == known_seat)
+  {
+    if (!contains(known, opening_lead.card))
+    {
+      throw std::invalid_argument("opening lead card is not in the known hand");
+    }
+    return;
+  }
+  if (opening_lead.seat == dummy_seat)
+  {
+    if (!contains(dummy, opening_lead.card))
+    {
+      throw std::invalid_argument("opening lead card is not in the dummy hand");
+    }
+    return;
+  }
+  if (contains(known, opening_lead.card) || contains(dummy, opening_lead.card))
+  {
+    throw std::invalid_argument(
+        "opening lead card must come from the available pool for opposition seats");
+  }
+  if (!contains(available, opening_lead.card))
+  {
+    throw std::invalid_argument("opening lead card is not in the available pool");
+  }
+}
+
+auto apply_opening_lead(GameState state, const OpeningLead& opening_lead) -> GameState
+{
+  state.leader = opening_lead.seat;
+  remove_card(
+      state.hands[static_cast<std::size_t>(opening_lead.seat)],
+      opening_lead.card);
+  if (opening_lead.seat == state.east_seat)
+  {
+    --state.east_slots;
+  }
+  else if (opening_lead.seat == state.west_seat)
+  {
+    --state.west_slots;
+  }
+  state.trick.push_back(PlayedCard{opening_lead.seat, opening_lead.card});
+  if (state.trick.size() == 4)
+  {
+    record_trick_win_ranks(state);
+    const int winner =
+        trick_winner(state.trick, state.denomination, state.leader);
+    if (is_partnership_seat(winner, state.known_seat, state.dummy_seat))
+    {
+      ++state.partnership_tricks;
+    }
+    state.leader = winner;
+    state.trick.clear();
+  }
+  return state;
+}
+
+auto hands_without_opening_lead(
+    const std::vector<Card>& known,
+    const std::vector<Card>& dummy,
+    int known_seat,
+    int dummy_seat,
+    const OpeningLead& opening_lead)
+    -> std::pair<std::vector<Card>, std::vector<Card>>
+{
+  auto known_hand = known;
+  auto dummy_hand = dummy;
+  if (opening_lead.seat == known_seat)
+  {
+    remove_card(known_hand, opening_lead.card);
+  }
+  else if (opening_lead.seat == dummy_seat)
+  {
+    remove_card(dummy_hand, opening_lead.card);
+  }
+  return {known_hand, dummy_hand};
+}
+
 auto hands_for_opponent_split(
     const std::array<std::vector<Card>, kHands>& base_hands,
     int east_seat,
@@ -1329,7 +1446,8 @@ auto enumerate_unknown_splits(
       /*west_void_suits=*/0,
       /*constraint=*/nullptr,
       /*pin_constraint=*/nullptr,
-      min_significant_rank);
+      min_significant_rank,
+      {});
 }
 
 auto enumerate_constrained_opponent_splits(
@@ -1345,7 +1463,8 @@ auto enumerate_constrained_opponent_splits(
     int west_void_suits,
     const DealConstraint* constraint,
     const DealConstraint* pin_constraint,
-    int min_significant_rank) -> std::vector<UnknownSplit>
+    int min_significant_rank,
+    const std::vector<DealConstraintPin>& extra_pins) -> std::vector<UnknownSplit>
 {
   if (min_significant_rank < 2 || min_significant_rank > 14)
   {
@@ -1368,7 +1487,8 @@ auto enumerate_constrained_opponent_splits(
 
   auto ordered = unassigned;
   std::sort(ordered.begin(), ordered.end());
-  const auto pins = pins_from_constraint(pin_constraint);
+  auto pins = pins_from_constraint(pin_constraint);
+  pins.insert(pins.end(), extra_pins.begin(), extra_pins.end());
   const auto east_eligible = cards_eligible_for_seat(ordered, east_void_suits);
   if (static_cast<int>(east_eligible.size()) < east_need)
   {
@@ -1525,6 +1645,188 @@ auto evaluate_lead(
   return result;
 }
 
+auto seat_after_lead(int leader_seat) -> int
+{
+  return (leader_seat + 1) % kHands;
+}
+
+auto first_partnership_seat_to_play(
+    int leader_seat,
+    int known_seat,
+    int dummy_seat) -> int
+{
+  int seat = seat_after_lead(leader_seat);
+  for (int step = 0; step < kHands; ++step)
+  {
+    if (is_partnership_seat(seat, known_seat, dummy_seat))
+    {
+      return seat;
+    }
+    seat = seat_after_lead(seat);
+  }
+  throw std::invalid_argument("no partnership seat plays after opening lead");
+}
+
+auto probe_state_after_opening_lead(
+    const std::vector<Card>& known,
+    const std::vector<Card>& dummy,
+    int known_seat,
+    int dummy_seat,
+    int denomination,
+    const std::vector<Card>& available,
+    const DealConstraint& deal_constraint,
+    const OpeningLead& opening_lead,
+    int min_significant_rank) -> GameState
+{
+  const auto [known_hand, dummy_hand] = hands_without_opening_lead(
+      known,
+      dummy,
+      known_seat,
+      dummy_seat,
+      opening_lead);
+  auto state = make_initial_state(
+      known_hand,
+      dummy_hand,
+      known_seat,
+      dummy_seat,
+      denomination,
+      available,
+      deal_constraint,
+      min_significant_rank);
+  state.leader = opening_lead.seat;
+  state.trick.push_back(PlayedCard{opening_lead.seat, opening_lead.card});
+  return state;
+}
+
+auto legal_response_cards_after_opening_lead(
+    const std::vector<Card>& known,
+    const std::vector<Card>& dummy,
+    int known_seat,
+    int dummy_seat,
+    int denomination,
+    const std::vector<Card>& available,
+    const DealConstraint& deal_constraint,
+    const OpeningLead& opening_lead,
+    int response_seat,
+    int min_significant_rank) -> std::vector<Card>
+{
+  const auto probe = probe_state_after_opening_lead(
+      known,
+      dummy,
+      known_seat,
+      dummy_seat,
+      denomination,
+      available,
+      deal_constraint,
+      opening_lead,
+      min_significant_rank);
+  return distinct_legal_cards(probe, response_seat);
+}
+
+auto hand_for_seat(
+    const std::vector<Card>& known,
+    const std::vector<Card>& dummy,
+    int known_seat,
+    int dummy_seat,
+    int seat) -> const std::vector<Card>&
+{
+  if (seat == known_seat)
+  {
+    return known;
+  }
+  if (seat == dummy_seat)
+  {
+    return dummy;
+  }
+  throw std::invalid_argument("seat is not a partnership hand");
+}
+
+auto evaluate_after_opening_lead(
+    const Card& play_card,
+    const std::vector<Card>& known,
+    const std::vector<Card>& dummy,
+    int known_seat,
+    int dummy_seat,
+    int denomination,
+    const std::vector<Card>& available,
+    const DealConstraint& deal_constraint,
+    const OpeningLead& opening_lead,
+    int response_seat,
+    const std::vector<UnknownSplit>& root_splits,
+    std::optional<int> goal,
+    int min_significant_rank) -> LeadEvaluation
+{
+  LeadEvaluation result{};
+  result.lead_card = play_card;
+  result.stats.goal = goal;
+
+  const auto [known_hand, dummy_hand] = hands_without_opening_lead(
+      known,
+      dummy,
+      known_seat,
+      dummy_seat,
+      opening_lead);
+  const bool opponent_led =
+      opening_lead.seat != known_seat && opening_lead.seat != dummy_seat;
+
+  auto state = make_initial_state(
+      known_hand,
+      dummy_hand,
+      known_seat,
+      dummy_seat,
+      denomination,
+      available,
+      deal_constraint,
+      min_significant_rank);
+  if (!opponent_led)
+  {
+    state.leader = opening_lead.seat;
+    state.trick.push_back(PlayedCard{opening_lead.seat, opening_lead.card});
+    if (state.trick.size() == 4)
+    {
+      record_trick_win_ranks(state);
+      const int winner =
+          trick_winner(state.trick, state.denomination, state.leader);
+      if (is_partnership_seat(winner, state.known_seat, state.dummy_seat))
+      {
+        ++state.partnership_tricks;
+      }
+      state.leader = winner;
+      state.trick.clear();
+    }
+  }
+  else
+  {
+    state.leader = opening_lead.seat;
+  }
+
+  int tricks = std::numeric_limits<int>::max();
+  for (const auto& split : root_splits)
+  {
+    auto split_state = apply_opponent_split(state, split);
+    if (opponent_led)
+    {
+      split_state = apply_opening_lead(split_state, opening_lead);
+    }
+    split_state.force_next_play = true;
+    split_state.forced_play_seat = response_seat;
+    split_state.forced_play = play_card;
+    tricks = std::min(
+        tricks,
+        evaluate_recursive(
+            split_state,
+            result.stats,
+            std::numeric_limits<int>::min(),
+            std::numeric_limits<int>::max()));
+    if (try_goal_cutoff(result.stats, tricks))
+    {
+      break;
+    }
+  }
+  result.tricks = tricks;
+  return result;
+}
+
 auto solve_single_dummy(
     const std::vector<Card>& known,
     const std::vector<Card>& dummy,
@@ -1535,9 +1837,20 @@ auto solve_single_dummy(
     std::optional<std::string> constraint_text,
     std::optional<int> goal,
     int thread_count,
-    int min_significant_rank) -> SingleDummyResult
+    int min_significant_rank,
+    std::optional<OpeningLead> opening_lead) -> SingleDummyResult
 {
   validate_position(known, dummy, known_seat, dummy_seat, available);
+  if (opening_lead.has_value())
+  {
+    validate_opening_lead(
+        *opening_lead,
+        known,
+        dummy,
+        known_seat,
+        dummy_seat,
+        available);
+  }
   const DealConstraint deal_constraint = constraint_text.has_value()
       ? compile_deal_constraint(*constraint_text)
       : DealConstraint{};
@@ -1563,8 +1876,33 @@ auto solve_single_dummy(
   }
 
   std::array<std::vector<Card>, kHands> hands{};
-  hands[static_cast<std::size_t>(known_seat)] = known;
-  hands[static_cast<std::size_t>(dummy_seat)] = dummy;
+  auto known_for_split = known;
+  auto dummy_for_split = dummy;
+  std::vector<DealConstraintPin> extra_pins;
+  if (opening_lead.has_value())
+  {
+    const bool opponent_led =
+        opening_lead->seat != known_seat && opening_lead->seat != dummy_seat;
+    if (opponent_led)
+    {
+      extra_pins.push_back(DealConstraintPin{
+          opening_lead->seat,
+          opening_lead->card.suit,
+          opening_lead->card.rank});
+    }
+    else if (opening_lead->seat == known_seat
+             || opening_lead->seat == dummy_seat)
+    {
+      std::tie(known_for_split, dummy_for_split) = hands_without_opening_lead(
+          known,
+          dummy,
+          known_seat,
+          dummy_seat,
+          *opening_lead);
+    }
+  }
+  hands[static_cast<std::size_t>(known_seat)] = known_for_split;
+  hands[static_cast<std::size_t>(dummy_seat)] = dummy_for_split;
 
   const auto [east_seat, west_seat] = opponent_seats(known_seat, dummy_seat);
   const DealConstraint* constraint =
@@ -1582,7 +1920,8 @@ auto solve_single_dummy(
       /*west_void_suits=*/0,
       constraint,
       constraint,
-      min_significant_rank);
+      min_significant_rank,
+      extra_pins);
   if (root_splits.empty())
   {
     throw std::invalid_argument(
@@ -1598,8 +1937,52 @@ auto solve_single_dummy(
   int total_transposition_bound_cutoffs = 0;
   int total_goal_cutoffs = 0;
 
-  std::vector<LeadEvaluation> lead_results(known.size());
+  std::vector<Card> cards_to_evaluate = known;
+  int response_seat = -1;
+  if (opening_lead.has_value())
+  {
+    response_seat = first_partnership_seat_to_play(
+        opening_lead->seat,
+        known_seat,
+        dummy_seat);
+    cards_to_evaluate = legal_response_cards_after_opening_lead(
+        known,
+        dummy,
+        known_seat,
+        dummy_seat,
+        denomination,
+        available,
+        deal_constraint,
+        *opening_lead,
+        response_seat,
+        min_significant_rank);
+    if (cards_to_evaluate.empty())
+    {
+      throw std::invalid_argument(
+          "no legal partnership response to the opening lead");
+    }
+  }
+
+  std::vector<LeadEvaluation> lead_results(cards_to_evaluate.size());
   const auto evaluate_index = [&](std::size_t index) {
+    if (opening_lead.has_value())
+    {
+      lead_results[index] = evaluate_after_opening_lead(
+          cards_to_evaluate[index],
+          known,
+          dummy,
+          known_seat,
+          dummy_seat,
+          denomination,
+          available,
+          deal_constraint,
+          *opening_lead,
+          response_seat,
+          root_splits,
+          goal,
+          min_significant_rank);
+      return;
+    }
     lead_results[index] = evaluate_lead(
         known[index],
         known,
@@ -1614,9 +1997,9 @@ auto solve_single_dummy(
         min_significant_rank);
   };
 
-  if (thread_count == 1 || known.size() <= 1)
+  if (thread_count == 1 || cards_to_evaluate.size() <= 1)
   {
-    for (std::size_t index = 0; index < known.size(); ++index)
+    for (std::size_t index = 0; index < cards_to_evaluate.size(); ++index)
     {
       evaluate_index(index);
     }
@@ -1625,7 +2008,7 @@ auto solve_single_dummy(
   {
     const int workers = std::min(
         thread_count,
-        static_cast<int>(known.size()));
+        static_cast<int>(cards_to_evaluate.size()));
     std::atomic<std::size_t> next_index{0};
     std::exception_ptr error;
     std::mutex error_mutex;
@@ -1637,7 +2020,7 @@ auto solve_single_dummy(
         while (true)
         {
           const std::size_t index = next_index.fetch_add(1);
-          if (index >= known.size())
+          if (index >= cards_to_evaluate.size())
           {
             return;
           }
@@ -1690,7 +2073,7 @@ auto solve_single_dummy(
   result.goal = goal;
   result.trick_matrix = std::move(matrix);
 
-  auto ordered_known = known;
+  auto ordered_known = cards_to_evaluate;
   std::sort(ordered_known.begin(), ordered_known.end());
   result.leads.reserve(ordered_known.size());
   for (const auto& card : ordered_known)
@@ -1767,7 +2150,8 @@ auto format_position_diagram(
     int dummy_seat,
     const std::vector<Card>& available,
     int denomination,
-    std::optional<std::string_view> constraint) -> std::string
+    std::optional<std::string_view> constraint,
+    std::optional<OpeningLead> opening_lead) -> std::string
 {
   static constexpr std::array<std::string_view, kHands> seat_names =
       {"North", "East", "South", "West"};
@@ -1777,6 +2161,12 @@ auto format_position_diagram(
   std::ostringstream out;
   out << "Trump: " << denom_labels[static_cast<std::size_t>(denomination)]
       << "\n\n";
+  if (opening_lead.has_value())
+  {
+    out << "Opening lead: "
+        << seat_names[static_cast<std::size_t>(opening_lead->seat)] << " "
+        << card_to_string(opening_lead->card) << "\n\n";
+  }
 
   const auto known_fields = hand_to_suit_fields(known);
   const auto dummy_fields = hand_to_suit_fields(dummy);

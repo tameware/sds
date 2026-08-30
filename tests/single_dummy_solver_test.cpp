@@ -39,7 +39,9 @@ using single_dummy_solver::enumerate_unknown_splits;
 using single_dummy_solver::kHands;
 using single_dummy_solver::kRankBitmaskQueen;
 using single_dummy_solver::kRankBitmaskSix;
+using single_dummy_solver::OpeningLead;
 using single_dummy_solver::parse_card;
+using single_dummy_solver::parse_opening_lead;
 using single_dummy_solver::parse_denomination;
 using single_dummy_solver::parse_goal;
 using single_dummy_solver::parse_hand;
@@ -1195,6 +1197,131 @@ TEST(SingleDummySolverTest, MinSignificantRankReducesInitialCombinationCount)
 
   EXPECT_GT(full.combination_count, merged.combination_count);
   EXPECT_EQ(full.maximin_value, merged.maximin_value);
+}
+
+TEST(SingleDummySolverTest, ParseOpeningLeadAcceptsSeatAndCard)
+{
+  const auto lead = parse_opening_lead("WH4");
+  EXPECT_EQ(lead.seat, 3);
+  EXPECT_EQ(parse_opening_lead("WH4").card, card("H4"));
+  EXPECT_EQ(parse_opening_lead("SsK").seat, 2);
+  EXPECT_EQ(parse_opening_lead("SsK").card, card("SK"));
+}
+
+TEST(SingleDummySolverTest, ParseOpeningLeadRejectsInvalidText)
+{
+  EXPECT_THROW(parse_opening_lead("W"), std::invalid_argument);
+  EXPECT_THROW(parse_opening_lead("XXY"), std::invalid_argument);
+}
+
+TEST(SingleDummySolverTest, OpeningLeadFromWestEvaluatesDummyFirstResponse)
+{
+  const OpeningLead west_leads_low_heart{3, card("H4")};
+  const auto after_lead = solve_single_dummy(
+      parse_hand("K98.3.."),
+      parse_hand("AJT.2.."),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/0,
+      parse_hand("Q76543.45.."),
+      {},
+      std::nullopt,
+      /*thread_count=*/0,
+      /*min_significant_rank=*/2,
+      west_leads_low_heart);
+
+  EXPECT_EQ(after_lead.leads.size(), 1u);
+  EXPECT_EQ(after_lead.combination_count, 35);
+  EXPECT_FALSE(find_min(after_lead, "SK").has_value());
+  EXPECT_FALSE(find_min(after_lead, "SA").has_value());
+  const auto heart_two_min = find_min(after_lead, "H2");
+  ASSERT_TRUE(heart_two_min.has_value());
+  EXPECT_EQ(*heart_two_min, 3);
+  EXPECT_EQ(after_lead.maximin_value, 3);
+}
+
+TEST(SingleDummySolverTest, OpeningLeadFromEastEvaluatesKnownFirstResponse)
+{
+  const OpeningLead east_leads_low_heart{1, card("H5")};
+  const auto after_lead = solve_single_dummy(
+      parse_hand("K98.3.."),
+      parse_hand("AJT.2.."),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/0,
+      parse_hand("Q76543.45.."),
+      {},
+      std::nullopt,
+      /*thread_count=*/0,
+      /*min_significant_rank=*/2,
+      east_leads_low_heart);
+
+  EXPECT_EQ(after_lead.leads.size(), 1u);
+  const auto heart_three_min = find_min(after_lead, "H3");
+  ASSERT_TRUE(heart_three_min.has_value());
+  EXPECT_FALSE(find_min(after_lead, "SA").has_value());
+}
+
+TEST(SingleDummySolverTest, OpeningLeadFromSouthClubAceShowsDummyClubTwoFollow)
+{
+  const OpeningLead south_leads_club_ace{2, card("CA")};
+  const auto after_lead = solve_single_dummy(
+      parse_hand("K.K.3.A"),
+      parse_hand("..AK2.2"),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/4,
+      parse_hand("A.A.456789."),
+      "len(deal.east.spades) == 0 and len(deal.west.hearts) == 0",
+      std::nullopt,
+      /*thread_count=*/0,
+      /*min_significant_rank=*/2,
+      south_leads_club_ace);
+
+  ASSERT_EQ(after_lead.leads.size(), 1u);
+  EXPECT_EQ(after_lead.leads[0].card, card("C2"));
+  EXPECT_EQ(after_lead.leads[0].min_tricks, 4);
+  EXPECT_EQ(after_lead.maximin_value, 4);
+}
+
+TEST(SingleDummySolverTest, OpeningLeadFromDummyClubTwoShowsKnownClubAceFollow)
+{
+  const OpeningLead north_leads_club_two{0, card("C2")};
+  const auto after_lead = solve_single_dummy(
+      parse_hand("K.K.3.A"),
+      parse_hand("..AK2.2"),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/4,
+      parse_hand("A.A.456789."),
+      "len(deal.east.spades) == 0 and len(deal.west.hearts) == 0",
+      std::nullopt,
+      /*thread_count=*/0,
+      /*min_significant_rank=*/2,
+      north_leads_club_two);
+
+  ASSERT_EQ(after_lead.leads.size(), 1u);
+  EXPECT_EQ(after_lead.leads[0].card, card("CA"));
+  EXPECT_EQ(after_lead.leads[0].min_tricks, 4);
+}
+
+TEST(SingleDummySolverTest, OpeningLeadRejectsCardNotInAvailablePool)
+{
+  const OpeningLead west_leads_missing_card{3, card("S2")};
+  EXPECT_THROW(
+      solve_single_dummy(
+          parse_hand("K98.3.."),
+          parse_hand("AJT.2.."),
+          /*known_seat=*/2,
+          /*dummy_seat=*/0,
+          /*denomination=*/0,
+          parse_hand("Q76543.45.."),
+          {},
+          std::nullopt,
+          /*thread_count=*/0,
+          /*min_significant_rank=*/2,
+          west_leads_missing_card),
+      std::invalid_argument);
 }
 
 }  // namespace

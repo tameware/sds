@@ -42,6 +42,11 @@ initial split and are enforced on later repartitions via void-suit tracking.
 Add `--diagram` to print the known hands, opposition seats, the shared
 available-card pool, and any constraint before the analysis output.
 
+Specify an opening lead as `--lead SEATCARD` (for example `--lead WH4` for
+West leads the ♥4). The table lists minimum tricks for each legal card the
+first partnership hand to play may contribute on that trick (following suit
+when required).
+
 After changing `MODULE.bazel`, refresh the lockfile:
 
 ```bash

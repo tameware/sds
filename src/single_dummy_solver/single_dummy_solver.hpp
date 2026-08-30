@@ -28,6 +28,12 @@ struct LeadResult
   int min_tricks;
 };
 
+struct OpeningLead
+{
+  int seat = 0;
+  Card card{};
+};
+
 struct UnknownSplit
 {
   std::vector<Card> first;
@@ -51,6 +57,8 @@ struct SingleDummyResult
 };
 
 auto parse_card(std::string_view text) -> Card;
+
+auto parse_opening_lead(std::string_view text) -> OpeningLead;
 
 auto parse_hand(std::string_view text) -> std::vector<Card>;
 
@@ -95,7 +103,8 @@ auto enumerate_constrained_opponent_splits(
     int west_void_suits = 0,
     const DealConstraint* constraint = nullptr,
     const DealConstraint* pin_constraint = nullptr,
-    int min_significant_rank = 2) -> std::vector<UnknownSplit>;
+    int min_significant_rank = 2,
+    const std::vector<DealConstraintPin>& extra_pins = {}) -> std::vector<UnknownSplit>;
 
 auto card_scores_from_future_tricks(
     const FutureTricks& fut,
@@ -130,7 +139,8 @@ auto solve_single_dummy(
     std::optional<std::string> constraint = std::nullopt,
     std::optional<int> goal = std::nullopt,
     int thread_count = 0,
-    int min_significant_rank = 2) -> SingleDummyResult;
+    int min_significant_rank = 2,
+    std::optional<OpeningLead> opening_lead = std::nullopt) -> SingleDummyResult;
 
 auto format_result(const SingleDummyResult& result, bool show_info = false) -> std::string;
 
@@ -141,6 +151,7 @@ auto format_position_diagram(
     int dummy_seat,
     const std::vector<Card>& available,
     int denomination,
-    std::optional<std::string_view> constraint = std::nullopt) -> std::string;
+    std::optional<std::string_view> constraint = std::nullopt,
+    std::optional<OpeningLead> opening_lead = std::nullopt) -> std::string;
 
 }  // namespace single_dummy_solver
