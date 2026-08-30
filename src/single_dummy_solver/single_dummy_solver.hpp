@@ -73,6 +73,10 @@ auto validate_position(
     int dummy_seat,
     const std::vector<Card>& available) -> void;
 
+auto available_cards_for_opponents(
+    const std::vector<Card>& known,
+    const std::vector<Card>& dummy) -> std::vector<Card>;
+
 auto enumerate_unknown_splits(
     const std::vector<Card>& pool,
     int hand_size,

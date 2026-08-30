@@ -29,6 +29,9 @@ accept expressions with `--constraint EXPR`. For example:
 --constraint "len(deal.east.spades) == 4 and deal.west.hcp >= 8"
 ```
 
+When known and dummy each hold 13 cards, omit `--available`; the remaining 26
+cards are inferred automatically.
+
 Expressions may reference `deal.{north,east,south,west}.{spades,hearts,diamonds,clubs}`,
 `deal.{seat}.hcp`, and `deal.{seat}.shape[index]`, honor membership (rank `2`–`14`
 or `A`/`K`/`Q`/`J`/`T` `in deal.{seat}.{suit}`), with `len(...)`, comparisons, and `and` / `or` / `not`.

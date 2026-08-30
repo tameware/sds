@@ -50,6 +50,7 @@ using single_dummy_solver::parse_seat;
 using single_dummy_solver::format_position_diagram;
 using single_dummy_solver::format_result;
 using single_dummy_solver::solve_single_dummy;
+using single_dummy_solver::available_cards_for_opponents;
 using single_dummy_solver::validate_position;
 
 auto empty_base_hands() -> std::array<std::vector<Card>, kHands>
@@ -207,6 +208,38 @@ TEST(SingleDummySolverTest, ValidatePositionRejectsInvalidLayouts)
           /*known_seat=*/0,
           /*dummy_seat=*/2,
           parse_hand("A.2..")),
+      std::invalid_argument);
+}
+
+TEST(SingleDummySolverTest, AvailableCardsForOpponentsRequiresThirteenCardHands)
+{
+  EXPECT_THROW(
+      available_cards_for_opponents(parse_hand("A..."), parse_hand("K...")),
+      std::invalid_argument);
+}
+
+TEST(SingleDummySolverTest, AvailableCardsForOpponentsReturnsRemainingDeckCards)
+{
+  const auto known = parse_hand("AKQJT98765432...");
+  const auto dummy = parse_hand(".AKQJT98765432..");
+  const auto available = available_cards_for_opponents(known, dummy);
+  const auto expected = parse_hand("..AKQJT98765432.AKQJT98765432");
+
+  ASSERT_EQ(available.size(), 26u);
+  auto sorted_available = available;
+  auto sorted_expected = expected;
+  std::sort(sorted_available.begin(), sorted_available.end());
+  std::sort(sorted_expected.begin(), sorted_expected.end());
+  EXPECT_EQ(sorted_available, sorted_expected);
+  EXPECT_NO_THROW(
+      validate_position(known, dummy, /*known_seat=*/2, /*dummy_seat=*/0, available));
+}
+
+TEST(SingleDummySolverTest, AvailableCardsForOpponentsRejectsDuplicateCards)
+{
+  const auto hand = parse_hand("AKQJT98765432...");
+  EXPECT_THROW(
+      available_cards_for_opponents(hand, hand),
       std::invalid_argument);
 }
 

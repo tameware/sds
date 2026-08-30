@@ -21,12 +21,13 @@ void print_usage()
 {
   std::cerr
       << "Usage: single_dummy_solver --known HAND --known-seat SEAT "
-         "--dummy HAND --dummy-seat SEAT --available HAND --trump DENOM "
+         "--dummy HAND --dummy-seat SEAT [--available HAND] --trump DENOM "
          "[--constraint EXPR] [--diagram] [--info] [--goal TRICKS] [--threads N] "
          "[--min-significant-rank RANK]\n"
       << "  N=0 selects hardware concurrency (default).\n"
       << "  RANK=2..14 or rank character; default 2 treats every card as significant.\n"
       << "  Hands use PBN suit fields (e.g. AJT.2..).\n"
+      << "  Omit --available when known and dummy each hold 13 cards.\n"
       << "  Seats are N/E/S/W; denomination is S/H/D/C/NT.\n"
       << "  CONSTRAINT is a redeal-style Python expression on deal.north/east/"
          "south/west (e.g. A in deal.east.spades and deal.west.hcp >= 8).\n";
@@ -123,9 +124,8 @@ auto main(int argc, char* argv[]) -> int
     return 1;
   }
 
-  if (known_text.empty() || dummy_text.empty() || available_text.empty()
-      || known_seat_text.empty() || dummy_seat_text.empty()
-      || denomination_text.empty())
+  if (known_text.empty() || dummy_text.empty() || known_seat_text.empty()
+      || dummy_seat_text.empty() || denomination_text.empty())
   {
     print_usage();
     return 1;
@@ -135,7 +135,9 @@ auto main(int argc, char* argv[]) -> int
   {
     const auto known = single_dummy_solver::parse_hand(known_text);
     const auto dummy = single_dummy_solver::parse_hand(dummy_text);
-    const auto available = single_dummy_solver::parse_hand(available_text);
+    const auto available = available_text.empty()
+        ? single_dummy_solver::available_cards_for_opponents(known, dummy)
+        : single_dummy_solver::parse_hand(available_text);
     const int known_seat = single_dummy_solver::parse_seat(known_seat_text);
     const int dummy_seat = single_dummy_solver::parse_seat(dummy_seat_text);
     const int denomination =

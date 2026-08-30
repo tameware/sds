@@ -1197,6 +1197,61 @@ auto parse_denomination(std::string_view text) -> int
   throw std::invalid_argument("invalid denomination (use S/H/D/C/NT)");
 }
 
+auto available_cards_for_opponents(
+    const std::vector<Card>& known,
+    const std::vector<Card>& dummy) -> std::vector<Card>
+{
+  constexpr int kFullHandSize = 13;
+  if (known.size() != kFullHandSize || dummy.size() != kFullHandSize)
+  {
+    throw std::invalid_argument(
+        "available pool is implicit only when known and dummy each have 13 cards");
+  }
+
+  std::vector<Card> remaining;
+  remaining.reserve(26);
+  for (int suit = 0; suit < kSuits; ++suit)
+  {
+    for (int rank = 2; rank <= 14; ++rank)
+    {
+      remaining.push_back(Card{suit, rank});
+    }
+  }
+
+  const auto remove_card = [](std::vector<Card>& cards, const Card& target) -> bool {
+    const auto it = std::find(cards.begin(), cards.end(), target);
+    if (it == cards.end())
+    {
+      return false;
+    }
+    cards.erase(it);
+    return true;
+  };
+
+  for (const auto& card : known)
+  {
+    if (!remove_card(remaining, card))
+    {
+      throw std::invalid_argument(
+          "known and dummy must contain 26 distinct cards from a full deck");
+    }
+  }
+  for (const auto& card : dummy)
+  {
+    if (!remove_card(remaining, card))
+    {
+      throw std::invalid_argument(
+          "known and dummy must contain 26 distinct cards from a full deck");
+    }
+  }
+  if (remaining.size() != 26)
+  {
+    throw std::invalid_argument(
+        "known and dummy must contain 26 distinct cards from a full deck");
+  }
+  return remaining;
+}
+
 auto validate_position(
     const std::vector<Card>& known,
     const std::vector<Card>& dummy,
