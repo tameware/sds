@@ -1,0 +1,2 @@
+--known K.K.3.A --known-seat S --dummy ..AK2.2 --dummy-seat N --available A.A.456789. --trump NT --east-void S --west-void H
+
