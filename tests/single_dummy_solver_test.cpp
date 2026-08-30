@@ -40,6 +40,7 @@ using single_dummy_solver::parse_card;
 using single_dummy_solver::parse_denomination;
 using single_dummy_solver::parse_goal;
 using single_dummy_solver::parse_hand;
+using single_dummy_solver::parse_min_significant_rank;
 using single_dummy_solver::parse_threads;
 using single_dummy_solver::default_thread_count;
 using single_dummy_solver::parse_seat;
@@ -842,6 +843,94 @@ TEST(SingleDummySolverTest, DefaultThreadCountSolveMatchesSingleThreadedResults)
   EXPECT_EQ(
       multi.opposition_split_evaluations,
       single.opposition_split_evaluations);
+}
+
+TEST(SingleDummySolverTest, ParseMinSignificantRankAcceptsValidRanks)
+{
+  EXPECT_EQ(parse_min_significant_rank("2"), 2);
+  EXPECT_EQ(parse_min_significant_rank("7"), 7);
+  EXPECT_EQ(parse_min_significant_rank("T"), 10);
+  EXPECT_EQ(parse_min_significant_rank("A"), 14);
+  EXPECT_THROW(parse_min_significant_rank(""), std::invalid_argument);
+  EXPECT_THROW(parse_min_significant_rank("1"), std::invalid_argument);
+  EXPECT_THROW(parse_min_significant_rank("15"), std::invalid_argument);
+}
+
+TEST(SingleDummySolverTest, MinSignificantRankDefaultKeepsLowCardSplitsDistinct)
+{
+  const auto pool = parse_hand("32...");
+  const auto splits = enumerate_constrained_opponent_splits(
+      pool,
+      /*east_hand_size=*/0,
+      /*west_hand_size=*/0,
+      /*east_slots=*/1,
+      /*west_slots=*/1,
+      /*east_void_suits=*/0,
+      /*west_void_suits=*/0,
+      /*min_significant_rank=*/2);
+  EXPECT_EQ(splits.size(), 2u);
+}
+
+TEST(SingleDummySolverTest, MinSignificantRankMergesInsignificantLowCardSplits)
+{
+  const auto pool = parse_hand("32...");
+  const auto splits = enumerate_constrained_opponent_splits(
+      pool,
+      /*east_hand_size=*/0,
+      /*west_hand_size=*/0,
+      /*east_slots=*/1,
+      /*west_slots=*/1,
+      /*east_void_suits=*/0,
+      /*west_void_suits=*/0,
+      /*min_significant_rank=*/7);
+  ASSERT_EQ(splits.size(), 1u);
+  EXPECT_TRUE(
+      splits[0].first.front().rank == 2 || splits[0].first.front().rank == 3);
+}
+
+TEST(SingleDummySolverTest, MinSignificantRankKeepsSignificantCardSplitsDistinct)
+{
+  const auto pool = parse_hand("72...");
+  const auto splits = enumerate_constrained_opponent_splits(
+      pool,
+      /*east_hand_size=*/0,
+      /*west_hand_size=*/0,
+      /*east_slots=*/1,
+      /*west_slots=*/1,
+      /*east_void_suits=*/0,
+      /*west_void_suits=*/0,
+      /*min_significant_rank=*/7);
+  EXPECT_EQ(splits.size(), 2u);
+}
+
+TEST(SingleDummySolverTest, MinSignificantRankReducesInitialCombinationCount)
+{
+  const auto available = parse_hand("Q76543.45..");
+  const auto full = solve_single_dummy(
+      parse_hand("K98.3.."),
+      parse_hand("AJT.2.."),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/0,
+      available,
+      {},
+      std::nullopt,
+      /*thread_count=*/1,
+      /*min_significant_rank=*/2);
+  const auto merged = solve_single_dummy(
+      parse_hand("K98.3.."),
+      parse_hand("AJT.2.."),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/0,
+      available,
+      {},
+      std::nullopt,
+      /*thread_count=*/1,
+      /*min_significant_rank=*/7);
+
+  EXPECT_GT(full.combination_count, merged.combination_count);
+  EXPECT_EQ(full.maximin_value, merged.maximin_value);
 }
 
 }  // namespace

@@ -67,6 +67,8 @@ auto parse_goal(std::string_view text) -> int;
 
 auto parse_threads(std::string_view text) -> int;
 
+auto parse_min_significant_rank(std::string_view text) -> int;
+
 auto default_thread_count() -> int;
 
 auto parse_denomination(std::string_view text) -> int;
@@ -86,7 +88,8 @@ auto validate_seat_voids(
 
 auto enumerate_unknown_splits(
     const std::vector<Card>& pool,
-    int hand_size) -> std::vector<UnknownSplit>;
+    int hand_size,
+    int min_significant_rank = 2) -> std::vector<UnknownSplit>;
 
 auto enumerate_constrained_opponent_splits(
     const std::vector<Card>& unassigned,
@@ -95,7 +98,8 @@ auto enumerate_constrained_opponent_splits(
     int east_slots,
     int west_slots,
     int east_void_suits = 0,
-    int west_void_suits = 0) -> std::vector<UnknownSplit>;
+    int west_void_suits = 0,
+    int min_significant_rank = 2) -> std::vector<UnknownSplit>;
 
 auto card_scores_from_future_tricks(
     const FutureTricks& fut,
@@ -129,7 +133,8 @@ auto solve_single_dummy(
     const std::vector<Card>& available,
     std::array<int, kHands> seat_void_suits = {},
     std::optional<int> goal = std::nullopt,
-    int thread_count = 0) -> SingleDummyResult;
+    int thread_count = 0,
+    int min_significant_rank = 2) -> SingleDummyResult;
 
 auto format_result(const SingleDummyResult& result) -> std::string;
 

@@ -37,7 +37,8 @@ auto enumerate_constrained_opponent_splits(
     int east_slots,
     int west_slots,
     int east_void_suits,
-    int west_void_suits) -> std::vector<UnknownSplit>;
+    int west_void_suits,
+    int min_significant_rank) -> std::vector<UnknownSplit>;
 
 namespace
 {
@@ -68,6 +69,7 @@ struct GameState
   int west_slots;
   std::array<int, kHands> void_suits{};
   std::array<int, kSuits> win_ranks{};
+  int min_significant_rank = 2;
 };
 
 struct EvaluationStats
@@ -649,7 +651,8 @@ auto adversarial_splits(const GameState& state) -> std::vector<UnknownSplit>
       state.east_slots,
       state.west_slots,
       state.void_suits[static_cast<std::size_t>(state.east_seat)],
-      state.void_suits[static_cast<std::size_t>(state.west_seat)]);
+      state.void_suits[static_cast<std::size_t>(state.west_seat)],
+      state.min_significant_rank);
 }
 
 auto evaluate_recursive(
@@ -818,7 +821,8 @@ auto make_initial_state(
     int dummy_seat,
     int denomination,
     const std::vector<Card>& available,
-    const std::array<int, kHands>& seat_void_suits) -> GameState
+    const std::array<int, kHands>& seat_void_suits,
+    int min_significant_rank) -> GameState
 {
   const auto [east_seat, west_seat] = opponent_seats(known_seat, dummy_seat);
   GameState state{};
@@ -835,6 +839,7 @@ auto make_initial_state(
   state.east_slots = static_cast<int>(known.size());
   state.west_slots = static_cast<int>(known.size());
   state.void_suits = seat_void_suits;
+  state.min_significant_rank = min_significant_rank;
   return state;
 }
 
@@ -852,6 +857,52 @@ auto needs_adversarial_split_from_query(
   state.hands = query.hands;
   state.remaining_available = query.remaining_available;
   return needs_adversarial_split(state, seat);
+}
+
+using SplitMixingSignature = std::array<std::pair<int, int>, kSuits>;
+
+auto split_mixing_signature(
+    const std::vector<Card>& east_cards,
+    int min_significant_rank) -> SplitMixingSignature
+{
+  SplitMixingSignature signature{};
+  for (const auto& card : east_cards)
+  {
+    if (card.rank >= min_significant_rank)
+    {
+      signature[static_cast<std::size_t>(card.suit)].first
+          |= rank_bit(card.rank);
+    }
+    else
+    {
+      ++signature[static_cast<std::size_t>(card.suit)].second;
+    }
+  }
+  return signature;
+}
+
+auto deduplicate_splits_by_mixing(
+    std::vector<UnknownSplit> splits,
+    int min_significant_rank) -> std::vector<UnknownSplit>
+{
+  if (min_significant_rank <= 2)
+  {
+    return splits;
+  }
+  std::map<SplitMixingSignature, UnknownSplit> unique;
+  for (auto& split : splits)
+  {
+    unique.emplace(
+        split_mixing_signature(split.first, min_significant_rank),
+        std::move(split));
+  }
+  std::vector<UnknownSplit> deduplicated;
+  deduplicated.reserve(unique.size());
+  for (auto& entry : unique)
+  {
+    deduplicated.push_back(std::move(entry.second));
+  }
+  return deduplicated;
 }
 
 }  // namespace
@@ -1005,6 +1056,44 @@ auto default_thread_count() -> int
   return hardware == 0 ? 1 : static_cast<int>(hardware);
 }
 
+auto parse_min_significant_rank(std::string_view text) -> int
+{
+  if (text.empty())
+  {
+    throw std::invalid_argument("min significant rank must be in 2..14");
+  }
+  int rank = 0;
+  if (text.size() == 1)
+  {
+    rank = char_to_rank(text[0]);
+  }
+  else
+  {
+    try
+    {
+      std::size_t consumed = 0;
+      rank = std::stoi(std::string(text), &consumed);
+      if (consumed != text.size())
+      {
+        throw std::invalid_argument("min significant rank must be in 2..14");
+      }
+    }
+    catch (const std::invalid_argument&)
+    {
+      throw std::invalid_argument("min significant rank must be in 2..14");
+    }
+    catch (const std::out_of_range&)
+    {
+      throw std::invalid_argument("min significant rank must be in 2..14");
+    }
+  }
+  if (rank < 2 || rank > 14)
+  {
+    throw std::invalid_argument("min significant rank must be in 2..14");
+  }
+  return rank;
+}
+
 auto parse_denomination(std::string_view text) -> int
 {
   std::string key(text);
@@ -1125,14 +1214,18 @@ auto validate_seat_voids(
 
 auto enumerate_unknown_splits(
     const std::vector<Card>& pool,
-    int hand_size) -> std::vector<UnknownSplit>
+    int hand_size,
+    int min_significant_rank) -> std::vector<UnknownSplit>
 {
   return enumerate_constrained_opponent_splits(
       pool,
       /*east_hand_size=*/0,
       /*west_hand_size=*/0,
       /*east_slots=*/hand_size,
-      /*west_slots=*/hand_size);
+      /*west_slots=*/hand_size,
+      /*east_void_suits=*/0,
+      /*west_void_suits=*/0,
+      min_significant_rank);
 }
 
 auto enumerate_constrained_opponent_splits(
@@ -1142,8 +1235,13 @@ auto enumerate_constrained_opponent_splits(
     int east_slots,
     int west_slots,
     int east_void_suits,
-    int west_void_suits) -> std::vector<UnknownSplit>
+    int west_void_suits,
+    int min_significant_rank) -> std::vector<UnknownSplit>
 {
+  if (min_significant_rank < 2 || min_significant_rank > 14)
+  {
+    throw std::invalid_argument("min significant rank must be in 2..14");
+  }
   const int east_need = east_slots - east_hand_size;
   const int west_need = west_slots - west_hand_size;
   if (east_need < 0 || west_need < 0)
@@ -1191,7 +1289,7 @@ auto enumerate_constrained_opponent_splits(
     }
     splits.push_back(UnknownSplit{east_cards, west_cards});
   }
-  return splits;
+  return deduplicate_splits_by_mixing(std::move(splits), min_significant_rank);
 }
 
 auto card_scores_from_future_tricks(
@@ -1254,7 +1352,8 @@ auto evaluate_lead(
     const std::vector<Card>& available,
     const std::array<int, kHands>& seat_void_suits,
     const std::vector<UnknownSplit>& root_splits,
-    std::optional<int> goal) -> LeadEvaluation
+    std::optional<int> goal,
+    int min_significant_rank) -> LeadEvaluation
 {
   LeadEvaluation result{};
   result.lead_card = lead_card;
@@ -1266,7 +1365,8 @@ auto evaluate_lead(
       dummy_seat,
       denomination,
       available,
-      seat_void_suits);
+      seat_void_suits,
+      min_significant_rank);
   remove_card(state.hands[static_cast<std::size_t>(known_seat)], lead_card);
   state.trick.push_back(PlayedCard{known_seat, lead_card});
   if (state.trick.size() == 4)
@@ -1309,7 +1409,8 @@ auto solve_single_dummy(
     const std::vector<Card>& available,
     std::array<int, kHands> seat_void_suits,
     std::optional<int> goal,
-    int thread_count) -> SingleDummyResult
+    int thread_count,
+    int min_significant_rank) -> SingleDummyResult
 {
   validate_position(known, dummy, known_seat, dummy_seat, available);
   if (denomination < 0 || denomination > 4)
@@ -1319,6 +1420,10 @@ auto solve_single_dummy(
   if (goal.has_value() && (*goal < 0 || *goal > 13))
   {
     throw std::invalid_argument("goal must be in 0..13");
+  }
+  if (min_significant_rank < 2 || min_significant_rank > 14)
+  {
+    throw std::invalid_argument("min significant rank must be in 2..14");
   }
   if (thread_count == 0)
   {
@@ -1342,7 +1447,8 @@ auto solve_single_dummy(
       static_cast<int>(known.size()),
       static_cast<int>(known.size()),
       seat_void_suits[static_cast<std::size_t>(east_seat)],
-      seat_void_suits[static_cast<std::size_t>(west_seat)]);
+      seat_void_suits[static_cast<std::size_t>(west_seat)],
+      min_significant_rank);
   if (root_splits.empty())
   {
     throw std::invalid_argument(
@@ -1370,7 +1476,8 @@ auto solve_single_dummy(
         available,
         seat_void_suits,
         root_splits,
-        goal);
+        goal,
+        min_significant_rank);
   };
 
   if (thread_count == 1 || known.size() <= 1)
