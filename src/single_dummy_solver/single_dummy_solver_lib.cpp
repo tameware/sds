@@ -425,6 +425,21 @@ auto append_hand_lines(
   }
 }
 
+auto format_pbn_suit_fields(
+    const std::array<std::string, kSuits>& fields) -> std::string
+{
+  std::ostringstream out;
+  for (int suit = 0; suit < kSuits; ++suit)
+  {
+    if (suit > 0)
+    {
+      out << '.';
+    }
+    out << fields[static_cast<std::size_t>(suit)];
+  }
+  return out.str();
+}
+
 auto current_player(const GameState& state) -> int
 {
   return (state.leader + static_cast<int>(state.trick.size())) % kHands;
@@ -1579,7 +1594,7 @@ auto solve_single_dummy(
   return result;
 }
 
-auto format_result(const SingleDummyResult& result) -> std::string
+auto format_result(const SingleDummyResult& result, bool show_info) -> std::string
 {
   if (result.goal.has_value() && result.maximin_value < *result.goal)
   {
@@ -1589,16 +1604,19 @@ auto format_result(const SingleDummyResult& result) -> std::string
   }
 
   std::ostringstream out;
-  out << "combinations: " << result.combination_count << '\n';
-  out << "opposition_splits: " << result.opposition_split_evaluations << '\n';
-  out << "alpha_beta_cutoffs: " << result.alpha_beta_cutoffs << '\n';
-  out << "isomorphism_skipped: " << result.isomorphism_skipped_moves << '\n';
-  out << "transposition_hits: " << result.transposition_hits << '\n';
-  out << "transposition_bound_cutoffs: "
-      << result.transposition_bound_cutoffs << '\n';
-  if (result.goal.has_value())
+  if (show_info)
   {
-    out << "goal_cutoffs: " << result.goal_cutoffs << '\n';
+    out << "combinations: " << result.combination_count << '\n';
+    out << "opposition_splits: " << result.opposition_split_evaluations << '\n';
+    out << "alpha_beta_cutoffs: " << result.alpha_beta_cutoffs << '\n';
+    out << "isomorphism_skipped: " << result.isomorphism_skipped_moves << '\n';
+    out << "transposition_hits: " << result.transposition_hits << '\n';
+    out << "transposition_bound_cutoffs: "
+        << result.transposition_bound_cutoffs << '\n';
+    if (result.goal.has_value())
+    {
+      out << "goal_cutoffs: " << result.goal_cutoffs << '\n';
+    }
   }
   out << "maximin: " << result.maximin_value << " (";
   for (std::size_t index = 0; index < result.maximin_cards.size(); ++index)
@@ -1656,18 +1674,18 @@ auto format_position_diagram(
 
   for (int seat = 0; seat < kHands; ++seat)
   {
+    if (seat != known_seat && seat != dummy_seat)
+    {
+      continue;
+    }
     out << seat_names[static_cast<std::size_t>(seat)];
     if (seat == known_seat)
     {
       out << " (known)";
     }
-    else if (seat == dummy_seat)
-    {
-      out << " (dummy)";
-    }
     else
     {
-      out << " (opposition)";
+      out << " (dummy)";
     }
     append_void_suffix(
         seat_void_suits[static_cast<std::size_t>(seat)],
@@ -1678,13 +1696,9 @@ auto format_position_diagram(
     {
       append_hand_lines(known_fields, out);
     }
-    else if (seat == dummy_seat)
-    {
-      append_hand_lines(dummy_fields, out);
-    }
     else
     {
-      out << '\n';
+      append_hand_lines(dummy_fields, out);
     }
   }
 
@@ -1697,9 +1711,11 @@ auto format_position_diagram(
       out << ", ";
     }
     out << seat_names[static_cast<std::size_t>(opposition[index])];
+    append_void_suffix(
+        seat_void_suits[static_cast<std::size_t>(opposition[index])],
+        out);
   }
-  out << "):\n";
-  append_hand_lines(available_fields, out);
+  out << "): " << format_pbn_suit_fields(available_fields) << '\n';
   return out.str();
 }
 

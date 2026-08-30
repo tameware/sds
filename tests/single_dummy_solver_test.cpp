@@ -46,6 +46,7 @@ using single_dummy_solver::default_thread_count;
 using single_dummy_solver::parse_seat;
 using single_dummy_solver::parse_void_suits;
 using single_dummy_solver::format_position_diagram;
+using single_dummy_solver::format_result;
 using single_dummy_solver::solve_single_dummy;
 using single_dummy_solver::validate_position;
 using single_dummy_solver::validate_seat_voids;
@@ -391,6 +392,45 @@ TEST(SingleDummySolverTest, MidTrickRepartitionCapsClubAceLeadOnFiveCardDeal)
   EXPECT_EQ(*spade_two_min, 4);
   EXPECT_EQ(*club_ace_min, 3);
   EXPECT_EQ(result.maximin_value, 4);
+}
+
+TEST(SingleDummySolverTest, FormatResultHidesAlgorithmCountsByDefault)
+{
+  const auto result = solve_single_dummy(
+      parse_hand("K98.3..A"),
+      parse_hand("AJT.2..K"),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/0,
+      parse_hand("Q765...234567"));
+
+  const std::string formatted = format_result(result);
+
+  EXPECT_EQ(formatted.find("combinations:"), std::string::npos);
+  EXPECT_EQ(formatted.find("opposition_splits:"), std::string::npos);
+  EXPECT_EQ(formatted.find("alpha_beta_cutoffs:"), std::string::npos);
+  EXPECT_NE(formatted.find("maximin:"), std::string::npos);
+  EXPECT_NE(formatted.find("card  min_tricks"), std::string::npos);
+}
+
+TEST(SingleDummySolverTest, FormatResultShowsAlgorithmCountsWithInfo)
+{
+  const auto result = solve_single_dummy(
+      parse_hand("K98.3..A"),
+      parse_hand("AJT.2..K"),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/0,
+      parse_hand("Q765...234567"));
+
+  const std::string formatted = format_result(result, /*show_info=*/true);
+
+  EXPECT_NE(formatted.find("combinations:"), std::string::npos);
+  EXPECT_NE(formatted.find("opposition_splits:"), std::string::npos);
+  EXPECT_NE(formatted.find("alpha_beta_cutoffs:"), std::string::npos);
+  EXPECT_NE(formatted.find("isomorphism_skipped:"), std::string::npos);
+  EXPECT_NE(formatted.find("transposition_hits:"), std::string::npos);
+  EXPECT_NE(formatted.find("transposition_bound_cutoffs:"), std::string::npos);
 }
 
 TEST(SingleDummySolverTest, GoalReportsUnachievableWhenMaximinBelowTarget)
@@ -760,15 +800,15 @@ TEST(SingleDummySolverTest, FormatPositionDiagramShowsKnownHandsAndAvailablePool
   EXPECT_NE(diagram.find("Trump: S"), std::string::npos);
   EXPECT_NE(diagram.find("North (dummy)"), std::string::npos);
   EXPECT_NE(diagram.find("South (known)"), std::string::npos);
-  EXPECT_NE(diagram.find("East (opposition)"), std::string::npos);
-  EXPECT_NE(diagram.find("West (opposition)"), std::string::npos);
+  EXPECT_EQ(diagram.find("(opposition)"), std::string::npos);
   EXPECT_NE(diagram.find("S  AJT"), std::string::npos);
   EXPECT_NE(diagram.find("S  K98"), std::string::npos);
   EXPECT_NE(diagram.find("C  A"), std::string::npos);
   EXPECT_NE(diagram.find("C  K"), std::string::npos);
-  EXPECT_NE(diagram.find("Available (East, West):"), std::string::npos);
-  EXPECT_NE(diagram.find("S  Q765"), std::string::npos);
-  EXPECT_NE(diagram.find("C  765432"), std::string::npos);
+  EXPECT_NE(
+      diagram.find("Available (East, West): Q765...765432"),
+      std::string::npos);
+  EXPECT_EQ(diagram.find("Available (East, West):\n  S"), std::string::npos);
 }
 
 TEST(SingleDummySolverTest, FormatPositionDiagramShowsVoidSuits)
@@ -784,7 +824,7 @@ TEST(SingleDummySolverTest, FormatPositionDiagramShowsVoidSuits)
       /*denomination=*/0,
       seat_void_suits);
 
-  EXPECT_NE(diagram.find("East (opposition) [void: H]"), std::string::npos);
+  EXPECT_NE(diagram.find("Available (East [void: H], West): "), std::string::npos);
 }
 
 TEST(SingleDummySolverTest, ParseThreadsAcceptsZeroForHardwareConcurrency)

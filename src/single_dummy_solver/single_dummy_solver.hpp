@@ -136,7 +136,7 @@ auto solve_single_dummy(
     int thread_count = 0,
     int min_significant_rank = 2) -> SingleDummyResult;
 
-auto format_result(const SingleDummyResult& result) -> std::string;
+auto format_result(const SingleDummyResult& result, bool show_info = false) -> std::string;
 
 auto format_position_diagram(
     const std::vector<Card>& known,

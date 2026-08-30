@@ -24,7 +24,7 @@ void print_usage()
       << "Usage: single_dummy_solver --known HAND --known-seat SEAT "
          "--dummy HAND --dummy-seat SEAT --available HAND --trump DENOM "
          "[--north-void SUITS] [--east-void SUITS] [--south-void SUITS] "
-         "[--west-void SUITS] [--diagram] [--goal TRICKS] [--threads N] "
+         "[--west-void SUITS] [--diagram] [--info] [--goal TRICKS] [--threads N] "
          "[--min-significant-rank RANK]\n"
       << "  N=0 selects hardware concurrency (default).\n"
       << "  RANK=2..14 or rank character; default 2 treats every card as significant.\n"
@@ -50,6 +50,7 @@ auto main(int argc, char* argv[]) -> int
   std::string dummy_seat_text;
   std::string denomination_text;
   bool show_diagram = false;
+  bool show_info = false;
   std::optional<std::string> goal_text;
   int thread_count = 0;
   int min_significant_rank = 2;
@@ -116,6 +117,11 @@ auto main(int argc, char* argv[]) -> int
     if (arg == "--diagram")
     {
       show_diagram = true;
+      continue;
+    }
+    if (arg == "--info")
+    {
+      show_info = true;
       continue;
     }
     if (arg == "--goal" && index + 1 < argc)
@@ -190,7 +196,7 @@ auto main(int argc, char* argv[]) -> int
         goal,
         thread_count,
         min_significant_rank);
-    std::cout << single_dummy_solver::format_result(result);
+    std::cout << single_dummy_solver::format_result(result, show_info);
     return 0;
   }
   catch (const std::exception& ex)
