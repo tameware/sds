@@ -1,0 +1,16 @@
+# 13 deals, 4 cards per hand, seed=186
+# One deal per line; pass a line to single_dummy_solver.
+
+--known 6.AK..Q --known-seat S --dummy .QT4.K. --dummy-seat N --available K4..982.K73 --trump S
+--known AQT...K --known-seat S --dummy 32.5..5 --dummy-seat N --available .T84.9643.A --trump NT
+--known ..Q7.T2 --known-seat S --dummy ..K2.73 --dummy-seat N --available 4.KT97.J.K5 --trump C
+--known 94.K..J --known-seat S --dummy .T5.J.A --dummy-seat N --available 32.9.964.95 --trump H
+--known T.6.5.7 --known-seat S --dummy K.4.A4. --dummy-seat N --available AJ.2.K.T954 --trump D
+--known T9.6.K. --known-seat S --dummy .3.64.8 --dummy-seat N --available QJ4.Q54..Q9 --trump H
+--known ..AT.J9 --known-seat S --dummy 4.K.J.2 --dummy-seat N --available 5.QT75.5.K6 --trump D
+--known 3.3.Q.3 --known-seat S --dummy 5.AJ.A. --dummy-seat N --available 876.86.42.A --trump C
+--known .8.K.92 --known-seat S --dummy 95.4.7. --dummy-seat N --available A874.76.4.7 --trump S
+--known ..Q.K52 --known-seat S --dummy AT.Q..7 --dummy-seat N --available J8.A2.74.Q9 --trump C
+--known 7.4.T2. --known-seat S --dummy KT.8.3. --dummy-seat N --available 432.7.J8.KQ --trump NT
+--known 9..T3.Q --known-seat S --dummy K.A9..A --dummy-seat N --available A62.7.985.3 --trump H
+--known T743... --known-seat S --dummy .8.87.6 --dummy-seat N --available .A63.Q.9874 --trump D

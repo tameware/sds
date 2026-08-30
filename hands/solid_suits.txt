@@ -1,0 +1,7 @@
+# 4 deals with solid top spades (South) and hearts (North); all tricks achievable.
+# One deal per line; pass a line to single_dummy_solver.
+
+--known AKQJT... --known-seat S --dummy .AKQJT.. --dummy-seat N --available ..2345.234567 --trump S
+--known AKQJT9... --known-seat S --dummy .AKQJT9.. --dummy-seat N --available ..234567.234567 --trump S
+--known AKQJT98... --known-seat S --dummy .AKQJT98.. --dummy-seat N --available 765432..765432.23 --trump S
+--known AKQJT987... --known-seat S --dummy .AKQJT987.. --dummy-seat N --available 65432.65432.234567. --trump S
