@@ -11,6 +11,13 @@
 namespace single_dummy_solver
 {
 
+struct DealConstraintPin
+{
+  int seat = 0;
+  int suit = 0;
+  int rank = 0;
+};
+
 class DealConstraint
 {
 public:
@@ -20,6 +27,8 @@ public:
   auto evaluate(const std::array<std::vector<Card>, kHands>& hands) const -> bool;
 
   auto is_active() const -> bool;
+
+  auto pinned_cards() const -> std::vector<DealConstraintPin>;
 
 private:
   struct Impl;

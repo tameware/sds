@@ -90,6 +90,7 @@ auto enumerate_constrained_opponent_splits(
     int east_void_suits = 0,
     int west_void_suits = 0,
     const DealConstraint* constraint = nullptr,
+    const DealConstraint* pin_constraint = nullptr,
     int min_significant_rank = 2) -> std::vector<UnknownSplit>;
 
 auto card_scores_from_future_tricks(

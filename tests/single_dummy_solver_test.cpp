@@ -32,6 +32,7 @@ using single_dummy_solver::AdversarialSplitQuery;
 using single_dummy_solver::distinct_representative_ranks_in_suit;
 using single_dummy_solver::compile_deal_constraint;
 using single_dummy_solver::DealConstraint;
+using single_dummy_solver::DealConstraintPin;
 using single_dummy_solver::enumerate_constrained_opponent_splits;
 using single_dummy_solver::needs_adversarial_split;
 using single_dummy_solver::enumerate_unknown_splits;
@@ -63,6 +64,7 @@ auto enumerate_pool_splits(
     int east_void_suits = 0,
     int west_void_suits = 0,
     const DealConstraint* constraint = nullptr,
+    const DealConstraint* pin_constraint = nullptr,
     int min_significant_rank = 2) -> std::vector<single_dummy_solver::UnknownSplit>
 {
   return enumerate_constrained_opponent_splits(
@@ -77,6 +79,7 @@ auto enumerate_pool_splits(
       east_void_suits,
       west_void_suits,
       constraint,
+      pin_constraint != nullptr ? pin_constraint : constraint,
       min_significant_rank);
 }
 
@@ -244,6 +247,149 @@ TEST(SingleDummySolverTest, DealConstraintSupportsBooleanAnd)
   EXPECT_TRUE(constraint.evaluate(hands));
   hands[1] = parse_hand("Q...");
   EXPECT_FALSE(constraint.evaluate(hands));
+}
+
+TEST(SingleDummySolverTest, DealConstraintRankInSuitDetectsMembership)
+{
+  const auto constraint = compile_deal_constraint("A in deal.east.spades");
+  std::array<std::vector<Card>, kHands> hands{};
+  hands[1] = parse_hand("A...");
+  EXPECT_TRUE(constraint.evaluate(hands));
+  hands[1] = parse_hand("K...");
+  EXPECT_FALSE(constraint.evaluate(hands));
+}
+
+TEST(SingleDummySolverTest, DealConstraintRankInSuitSupportsHonorConstants)
+{
+  std::array<std::vector<Card>, kHands> hands{};
+  hands[2] = parse_hand("KQTJ...");
+  EXPECT_TRUE(compile_deal_constraint("K in deal.south.spades").evaluate(hands));
+  EXPECT_TRUE(compile_deal_constraint("Q in deal.south.spades").evaluate(hands));
+  EXPECT_TRUE(compile_deal_constraint("T in deal.south.spades").evaluate(hands));
+  EXPECT_TRUE(compile_deal_constraint("J in deal.south.spades").evaluate(hands));
+  EXPECT_FALSE(compile_deal_constraint("A in deal.south.spades").evaluate(hands));
+}
+
+TEST(SingleDummySolverTest, DealConstraintRankInSuitSupportsNumericRanks)
+{
+  std::array<std::vector<Card>, kHands> hands{};
+  hands[1] = parse_hand("9...");
+  EXPECT_TRUE(compile_deal_constraint("9 in deal.east.spades").evaluate(hands));
+  hands[1] = parse_hand("2...");
+  EXPECT_TRUE(compile_deal_constraint("2 in deal.east.spades").evaluate(hands));
+  hands[1] = parse_hand("T...");
+  EXPECT_TRUE(compile_deal_constraint("10 in deal.east.spades").evaluate(hands));
+  hands[1] = parse_hand("K...");
+  EXPECT_FALSE(compile_deal_constraint("9 in deal.east.spades").evaluate(hands));
+}
+
+TEST(SingleDummySolverTest, DealConstraintRankInSuitCombinesWithAnd)
+{
+  const auto constraint = compile_deal_constraint(
+      "A in deal.east.hearts and K in deal.west.clubs");
+  std::array<std::vector<Card>, kHands> hands{};
+  hands[1] = parse_hand(".A..");
+  hands[3] = parse_hand("...K");
+  EXPECT_TRUE(constraint.evaluate(hands));
+  hands[3] = parse_hand("...Q");
+  EXPECT_FALSE(constraint.evaluate(hands));
+}
+
+TEST(SingleDummySolverTest, DealConstraintRejectsInOnNonSuitAttribute)
+{
+  EXPECT_THROW(compile_deal_constraint("A in deal.east.hcp"), std::invalid_argument);
+}
+
+TEST(SingleDummySolverTest, ConstrainedSplitsFilterByRankInSuit)
+{
+  const auto pool = parse_hand("Q.A..");
+  const auto constraint = compile_deal_constraint("A in deal.east.hearts");
+  const auto splits = enumerate_pool_splits(
+      pool,
+      /*east_slots=*/1,
+      /*west_slots=*/1,
+      /*east_void_suits=*/0,
+      /*west_void_suits=*/0,
+      &constraint);
+  ASSERT_EQ(splits.size(), 1u);
+  EXPECT_EQ(splits[0].first.front(), card("HA"));
+  EXPECT_EQ(splits[0].second.front(), card("SQ"));
+}
+
+TEST(SingleDummySolverTest, DealConstraintExposesPinnedCards)
+{
+  const auto constraint = compile_deal_constraint(
+      "9 in deal.east.spades and A in deal.west.clubs");
+  const auto pins = constraint.pinned_cards();
+  ASSERT_EQ(pins.size(), 2u);
+  EXPECT_EQ(pins[0].seat, 1);
+  EXPECT_EQ(pins[0].suit, 0);
+  EXPECT_EQ(pins[0].rank, 9);
+  EXPECT_EQ(pins[1].seat, 3);
+  EXPECT_EQ(pins[1].suit, 3);
+  EXPECT_EQ(pins[1].rank, 14);
+}
+
+TEST(SingleDummySolverTest, DealConstraintRankPinRequiresCardOnEverySplit)
+{
+  const auto pool = parse_hand("92...");
+  const auto constraint = compile_deal_constraint("9 in deal.east.spades");
+
+  const auto without_constraint = enumerate_pool_splits(pool, 1, 1);
+  ASSERT_EQ(without_constraint.size(), 2u);
+
+  const auto with_constraint =
+      enumerate_pool_splits(pool, 1, 1, 0, 0, &constraint);
+  ASSERT_EQ(with_constraint.size(), 1u);
+  EXPECT_EQ(with_constraint[0].first.front(), card("S9"));
+  EXPECT_EQ(with_constraint[0].second.front(), card("S2"));
+}
+
+TEST(SingleDummySolverTest, DealConstraintRankPinAppliesWithoutFullConstraintEvaluation)
+{
+  const auto pool = parse_hand("92...K");
+  const auto constraint = compile_deal_constraint("9 in deal.east.spades");
+
+  const auto splits = enumerate_constrained_opponent_splits(
+      pool,
+      /*east_hand_size=*/0,
+      /*west_hand_size=*/0,
+      /*east_slots=*/1,
+      /*west_slots=*/2,
+      empty_base_hands(),
+      /*east_seat=*/1,
+      /*west_seat=*/3,
+      /*east_void_suits=*/0,
+      /*west_void_suits=*/0,
+      /*constraint=*/nullptr,
+      &constraint);
+  ASSERT_EQ(splits.size(), 1u);
+  EXPECT_EQ(splits[0].first.front(), card("S9"));
+}
+
+TEST(SingleDummySolverTest, DealConstraintRankPinIgnoredWhenCardNotInPool)
+{
+  const auto pool = parse_hand("2...");
+  const auto constraint = compile_deal_constraint("9 in deal.east.spades");
+
+  const auto splits = enumerate_pool_splits(pool, 1, 0, 0, 0, nullptr, &constraint);
+  ASSERT_EQ(splits.size(), 1u);
+  EXPECT_EQ(splits[0].first.front(), card("S2"));
+}
+
+TEST(SingleDummySolverTest, DealConstraintRankPinSurvivesMidDealRepartition)
+{
+  const auto result = solve_single_dummy(
+      parse_hand("8.3.92.K64"),
+      parse_hand("A.J.K43.Q3"),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/2,
+      parse_hand("96432.AQ86.QT.A97"),
+      std::string("9 in deal.east.spades and A in deal.west.clubs"));
+
+  EXPECT_EQ(result.leads.size(), 7u);
+  EXPECT_GT(result.combination_count, 0);
 }
 
 TEST(SingleDummySolverTest, InitialEastConstraintVoidSpadesReducesCombinations)
@@ -966,6 +1112,7 @@ TEST(SingleDummySolverTest, MinSignificantRankMergesInsignificantLowCardSplits)
       /*east_void_suits=*/0,
       /*west_void_suits=*/0,
       /*constraint=*/nullptr,
+      /*pin_constraint=*/nullptr,
       /*min_significant_rank=*/7);
   ASSERT_EQ(splits.size(), 1u);
   EXPECT_TRUE(
@@ -982,6 +1129,7 @@ TEST(SingleDummySolverTest, MinSignificantRankKeepsSignificantCardSplitsDistinct
       /*east_void_suits=*/0,
       /*west_void_suits=*/0,
       /*constraint=*/nullptr,
+      /*pin_constraint=*/nullptr,
       /*min_significant_rank=*/7);
   EXPECT_EQ(splits.size(), 2u);
 }

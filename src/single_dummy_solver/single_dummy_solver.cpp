@@ -29,7 +29,7 @@ void print_usage()
       << "  Hands use PBN suit fields (e.g. AJT.2..).\n"
       << "  Seats are N/E/S/W; denomination is S/H/D/C/NT.\n"
       << "  CONSTRAINT is a redeal-style Python expression on deal.north/east/"
-         "south/west (e.g. len(deal.east.spades) == 0 and deal.west.hcp >= 8).\n";
+         "south/west (e.g. A in deal.east.spades and deal.west.hcp >= 8).\n";
 }
 
 }  // namespace

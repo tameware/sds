@@ -30,8 +30,11 @@ accept expressions with `--constraint EXPR`. For example:
 ```
 
 Expressions may reference `deal.{north,east,south,west}.{spades,hearts,diamonds,clubs}`,
-`deal.{seat}.hcp`, and `deal.{seat}.shape[index]`, with `len(...)`, comparisons,
-and `and` / `or` / `not`.
+`deal.{seat}.hcp`, and `deal.{seat}.shape[index]`, honor membership (rank `2`–`14`
+or `A`/`K`/`Q`/`J`/`T` `in deal.{seat}.{suit}`), with `len(...)`, comparisons, and `and` / `or` / `not`.
+Rank membership pins that card to the seat on every opposition repartition while it
+remains unseen; length constraints such as `len(deal.east.spades) == 0` apply at the
+initial split and are enforced on later repartitions via void-suit tracking.
 
 Add `--diagram` to print the known hands, opposition seats, the shared
 available-card pool, and any constraint before the analysis output.

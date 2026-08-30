@@ -43,6 +43,7 @@ auto enumerate_constrained_opponent_splits(
     int east_void_suits,
     int west_void_suits,
     const DealConstraint* constraint,
+    const DealConstraint* pin_constraint,
     int min_significant_rank) -> std::vector<UnknownSplit>;
 
 namespace
@@ -51,6 +52,41 @@ namespace
 constexpr std::string_view RankChars = "23456789TJQKA";
 constexpr std::string_view SuitChars = "SHDC";
 constexpr std::string_view SeatChars = "NESW";
+
+auto split_satisfies_pins(
+    const std::vector<DealConstraintPin>& pins,
+    const std::vector<Card>& pool,
+    int east_seat,
+    int west_seat,
+    const std::vector<Card>& east_cards,
+    const std::vector<Card>& west_cards) -> bool
+{
+  for (const auto& pin : pins)
+  {
+    const Card pinned{pin.suit, pin.rank};
+    if (!std::binary_search(pool.begin(), pool.end(), pinned))
+    {
+      continue;
+    }
+    const auto& seat_cards =
+        pin.seat == east_seat ? east_cards : west_cards;
+    if (!std::binary_search(seat_cards.begin(), seat_cards.end(), pinned))
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+auto pins_from_constraint(const DealConstraint* pin_constraint)
+    -> std::vector<DealConstraintPin>
+{
+  if (pin_constraint == nullptr || !pin_constraint->is_active())
+  {
+    return {};
+  }
+  return pin_constraint->pinned_cards();
+}
 
 struct PlayedCard
 {
@@ -573,6 +609,10 @@ auto remove_card(std::vector<Card>& hand, const Card& card) -> void
 
 auto apply_opponent_split(GameState state, const UnknownSplit& split) -> GameState
 {
+  const bool initial_opponent_assignment =
+      state.hands[static_cast<std::size_t>(state.east_seat)].empty()
+      && state.hands[static_cast<std::size_t>(state.west_seat)].empty();
+
   state.hands[static_cast<std::size_t>(state.east_seat)] = split.first;
   state.hands[static_cast<std::size_t>(state.west_seat)] = split.second;
   state.remaining_available.clear();
@@ -582,6 +622,26 @@ auto apply_opponent_split(GameState state, const UnknownSplit& split) -> GameSta
   std::sort(
       state.hands[static_cast<std::size_t>(state.west_seat)].begin(),
       state.hands[static_cast<std::size_t>(state.west_seat)].end());
+
+  if (initial_opponent_assignment)
+  {
+    for (const int seat : {state.east_seat, state.west_seat})
+    {
+      std::array<int, kSuits> suit_counts{};
+      for (const auto& card : state.hands[static_cast<std::size_t>(seat)])
+      {
+        ++suit_counts[static_cast<std::size_t>(card.suit)];
+      }
+      for (int suit = 0; suit < kSuits; ++suit)
+      {
+        if (suit_counts[static_cast<std::size_t>(suit)] == 0)
+        {
+          state.void_suits[static_cast<std::size_t>(seat)] |= 1 << suit;
+        }
+      }
+    }
+  }
+
   return state;
 }
 
@@ -652,8 +712,6 @@ auto adversarial_splits(const GameState& state) -> std::vector<UnknownSplit>
   auto base_hands = state.hands;
   base_hands[static_cast<std::size_t>(state.east_seat)].clear();
   base_hands[static_cast<std::size_t>(state.west_seat)].clear();
-  const DealConstraint* constraint =
-      state.deal_constraint.is_active() ? &state.deal_constraint : nullptr;
   return enumerate_constrained_opponent_splits(
       gather_opponent_cards(state),
       /*east_hand_size=*/0,
@@ -665,7 +723,8 @@ auto adversarial_splits(const GameState& state) -> std::vector<UnknownSplit>
       state.west_seat,
       state.void_suits[static_cast<std::size_t>(state.east_seat)],
       state.void_suits[static_cast<std::size_t>(state.west_seat)],
-      constraint,
+      /*constraint=*/nullptr,
+      state.deal_constraint.is_active() ? &state.deal_constraint : nullptr,
       state.min_significant_rank);
 }
 
@@ -1214,6 +1273,7 @@ auto enumerate_unknown_splits(
       /*east_void_suits=*/0,
       /*west_void_suits=*/0,
       /*constraint=*/nullptr,
+      /*pin_constraint=*/nullptr,
       min_significant_rank);
 }
 
@@ -1229,6 +1289,7 @@ auto enumerate_constrained_opponent_splits(
     int east_void_suits,
     int west_void_suits,
     const DealConstraint* constraint,
+    const DealConstraint* pin_constraint,
     int min_significant_rank) -> std::vector<UnknownSplit>
 {
   if (min_significant_rank < 2 || min_significant_rank > 14)
@@ -1252,6 +1313,7 @@ auto enumerate_constrained_opponent_splits(
 
   auto ordered = unassigned;
   std::sort(ordered.begin(), ordered.end());
+  const auto pins = pins_from_constraint(pin_constraint);
   const auto east_eligible = cards_eligible_for_seat(ordered, east_void_suits);
   if (static_cast<int>(east_eligible.size()) < east_need)
   {
@@ -1277,6 +1339,12 @@ auto enumerate_constrained_opponent_splits(
             [&](const Card& card) {
               return (west_void_suits & (1 << card.suit)) != 0;
             }))
+    {
+      continue;
+    }
+    if (!pins.empty()
+        && !split_satisfies_pins(
+            pins, ordered, east_seat, west_seat, east_cards, west_cards))
     {
       continue;
     }
@@ -1457,6 +1525,7 @@ auto solve_single_dummy(
       west_seat,
       /*east_void_suits=*/0,
       /*west_void_suits=*/0,
+      constraint,
       constraint,
       min_significant_rank);
   if (root_splits.empty())

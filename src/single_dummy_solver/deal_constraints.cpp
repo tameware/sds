@@ -33,6 +33,7 @@ enum class TokenKind
   and_kw,
   or_kw,
   not_kw,
+  in_kw,
 };
 
 struct Token
@@ -167,6 +168,10 @@ private:
     else if (token.text == "not")
     {
       token.kind = TokenKind::not_kw;
+    }
+    else if (token.text == "in")
+    {
+      token.kind = TokenKind::in_kw;
     }
     else
     {
@@ -388,6 +393,54 @@ struct NotExpr final : BoolExpr
   std::unique_ptr<BoolExpr> inner_;
 };
 
+struct RankInSuitExpr final : BoolExpr
+{
+  RankInSuitExpr(int rank, int seat, int suit)
+      : rank_(rank), seat_(seat), suit_(suit)
+  {
+  }
+
+  auto eval_bool(const std::array<std::vector<Card>, kHands>& hands) const
+      -> bool override
+  {
+    for (const auto& card : hands[static_cast<std::size_t>(seat_)])
+    {
+      if (card.suit == suit_ && card.rank == rank_)
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  int rank_;
+  int seat_;
+  int suit_;
+};
+
+auto rank_from_constant(std::string_view name) -> std::optional<int>
+{
+  if (name.size() != 1)
+  {
+    return std::nullopt;
+  }
+  switch (name.front())
+  {
+    case 'A':
+      return 14;
+    case 'K':
+      return 13;
+    case 'Q':
+      return 12;
+    case 'J':
+      return 11;
+    case 'T':
+      return 10;
+    default:
+      return std::nullopt;
+  }
+}
+
 class Parser
 {
 public:
@@ -446,6 +499,48 @@ private:
     {
       eat(TokenKind::not_kw);
       return std::make_unique<NotExpr>(parse_not());
+    }
+    return parse_membership();
+  }
+
+  auto parse_rank_for_membership() -> std::optional<int>
+  {
+    if (current_.kind == TokenKind::identifier)
+    {
+      return rank_from_constant(current_.text);
+    }
+    if (current_.kind == TokenKind::integer)
+    {
+      const int rank = current_.integer;
+      if (rank >= 2 && rank <= 14)
+      {
+        return rank;
+      }
+    }
+    return std::nullopt;
+  }
+
+  auto parse_membership() -> std::unique_ptr<BoolExpr>
+  {
+    const auto rank = parse_rank_for_membership();
+    if (rank.has_value())
+    {
+      if (current_.kind == TokenKind::identifier)
+      {
+        eat(TokenKind::identifier);
+      }
+      else
+      {
+        eat(TokenKind::integer);
+      }
+      if (current_.kind != TokenKind::in_kw)
+      {
+        throw std::invalid_argument("rank constants must be used with in");
+      }
+      eat(TokenKind::in_kw);
+      const auto seat_suit = parse_deal_suit_reference();
+      return std::make_unique<RankInSuitExpr>(
+          *rank, seat_suit.first, seat_suit.second);
     }
     return parse_comparison();
   }
@@ -551,6 +646,30 @@ private:
     return std::make_unique<HandSuitLengthExpr>(seat, *suit);
   }
 
+  auto parse_deal_suit_reference() -> std::pair<int, int>
+  {
+    if (current_.kind != TokenKind::identifier || current_.text != "deal")
+    {
+      throw std::invalid_argument("expected deal.<seat>.<suit>");
+    }
+    eat(TokenKind::identifier);
+    eat(TokenKind::dot);
+    const int seat = parse_seat_name();
+    eat(TokenKind::dot);
+    if (current_.kind != TokenKind::identifier)
+    {
+      throw std::invalid_argument("expected deal.<seat>.<suit>");
+    }
+    const std::string attr = current_.text;
+    eat(TokenKind::identifier);
+    const std::optional<int> suit = parse_suit_name(attr);
+    if (!suit.has_value())
+    {
+      throw std::invalid_argument("expected deal.<seat>.<suit>");
+    }
+    return {seat, *suit};
+  }
+
   auto parse_seat_name() -> int
   {
     if (current_.kind != TokenKind::identifier)
@@ -603,14 +722,20 @@ private:
   Token current_;
 };
 
-auto compile_constraint_evaluator(
-    std::string_view expression)
-    -> std::function<bool(const std::array<std::vector<Card>, kHands>&)>
+auto collect_pins(const BoolExpr& expr, std::vector<DealConstraintPin>& pins)
+    -> void
 {
-  const std::shared_ptr<BoolExpr> tree = Parser(expression).parse();
-  return [tree](const std::array<std::vector<Card>, kHands>& hands) {
-    return tree->eval_bool(hands);
-  };
+  if (const auto* rank_expr = dynamic_cast<const RankInSuitExpr*>(&expr))
+  {
+    pins.push_back(
+        DealConstraintPin{rank_expr->seat_, rank_expr->suit_, rank_expr->rank_});
+    return;
+  }
+  if (const auto* and_expr = dynamic_cast<const AndExpr*>(&expr))
+  {
+    collect_pins(*and_expr->left_, pins);
+    collect_pins(*and_expr->right_, pins);
+  }
 }
 
 }  // namespace
@@ -618,11 +743,16 @@ auto compile_constraint_evaluator(
 struct DealConstraint::Impl
 {
   explicit Impl(std::string_view expression)
-      : evaluate(compile_constraint_evaluator(expression))
   {
+    const std::shared_ptr<BoolExpr> tree = Parser(expression).parse();
+    evaluate = [tree](const std::array<std::vector<Card>, kHands>& hands) {
+      return tree->eval_bool(hands);
+    };
+    collect_pins(*tree, pins);
   }
 
   std::function<bool(const std::array<std::vector<Card>, kHands>&)> evaluate;
+  std::vector<DealConstraintPin> pins;
 };
 
 DealConstraint::DealConstraint() = default;
@@ -645,6 +775,15 @@ auto DealConstraint::evaluate(
     return true;
   }
   return impl_->evaluate(hands);
+}
+
+auto DealConstraint::pinned_cards() const -> std::vector<DealConstraintPin>
+{
+  if (!impl_)
+  {
+    return {};
+  }
+  return impl_->pins;
 }
 
 auto compile_deal_constraint(std::string_view expression) -> DealConstraint
