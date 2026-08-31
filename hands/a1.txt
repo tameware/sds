@@ -1,0 +1,1 @@
+--known j32.a32.k32.aq32 --known-seat S --dummy q4.K54.A654.KJ54 --dummy-seat N --trump NT --min-significant-rank J --goal 9 --lead WS5
