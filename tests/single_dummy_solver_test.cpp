@@ -40,6 +40,7 @@ using single_dummy_solver::kHands;
 using single_dummy_solver::kRankBitmaskQueen;
 using single_dummy_solver::kRankBitmaskSix;
 using single_dummy_solver::OpeningLead;
+using single_dummy_solver::LeadResult;
 using single_dummy_solver::parse_card;
 using single_dummy_solver::parse_opening_lead;
 using single_dummy_solver::parse_denomination;
@@ -731,6 +732,61 @@ TEST(SingleDummySolverTest, FormatResultShowsAlgorithmCountsWithInfo)
   EXPECT_NE(formatted.find("transposition_hits:"), std::string::npos);
   EXPECT_NE(formatted.find("transposition_bound_cutoffs:"), std::string::npos);
   EXPECT_NE(formatted.find("maximin:"), std::string::npos);
+}
+
+TEST(SingleDummySolverTest, FormatResultShowsUpperBoundWhenGoalCutoffStopsShort)
+{
+  SingleDummyResult result{};
+  result.maximin_value = 5;
+  result.maximin_cards = {card("S9")};
+  result.goal = 5;
+  result.leads = {
+      LeadResult{card("S9"), 5, /*min_tricks_upper_bound=*/false},
+      LeadResult{card("SQ"), 4, /*min_tricks_upper_bound=*/true},
+  };
+
+  const std::string formatted = format_result(result);
+  EXPECT_NE(formatted.find("S9 *  5\n"), std::string::npos);
+  EXPECT_NE(formatted.find("SQ  <=4\n"), std::string::npos);
+  EXPECT_EQ(formatted.find("SQ  4\n"), std::string::npos);
+}
+
+TEST(SingleDummySolverTest, GoalCutoffFormatsSubGoalLeadsAsUpperBound)
+{
+  // Maximin is H3=3; spade leads are held to 2. With --goal 3 those spade
+  // results are only upper bounds once goal pruning stops early.
+  const auto result = solve_single_dummy(
+      parse_hand("K98.3.."),
+      parse_hand("AJT.2.."),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/0,
+      parse_hand("Q76543.45.."),
+      {},
+      /*goal=*/3);
+
+  ASSERT_EQ(result.maximin_value, 3);
+  ASSERT_TRUE(result.goal.has_value());
+  EXPECT_GT(result.goal_cutoffs, 0);
+
+  bool saw_upper_bound = false;
+  for (const auto& lead : result.leads)
+  {
+    if (lead.min_tricks < *result.goal)
+    {
+      EXPECT_TRUE(lead.min_tricks_upper_bound);
+      saw_upper_bound = true;
+    }
+    else
+    {
+      EXPECT_FALSE(lead.min_tricks_upper_bound);
+    }
+  }
+  EXPECT_TRUE(saw_upper_bound);
+
+  const std::string formatted = format_result(result);
+  EXPECT_NE(formatted.find("H3 *  3\n"), std::string::npos);
+  EXPECT_NE(formatted.find("<="), std::string::npos);
 }
 
 TEST(SingleDummySolverTest, GoalReportsUnachievableWhenMaximinBelowTarget)
