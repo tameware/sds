@@ -195,12 +195,19 @@ TEST(SingleDummySolverTest, ValidatePositionRejectsInvalidLayouts)
   EXPECT_THROW(
       validate_position(one, two, /*known_seat=*/0, /*dummy_seat=*/2, pool),
       std::invalid_argument);
-  EXPECT_THROW(
+  EXPECT_NO_THROW(
       validate_position(
           parse_hand("A..."),
           parse_hand("K..."),
           /*known_seat=*/0,
           /*dummy_seat=*/1,
+          parse_hand("Q.2..")));
+  EXPECT_THROW(
+      validate_position(
+          parse_hand("A..."),
+          parse_hand("K..."),
+          /*known_seat=*/0,
+          /*dummy_seat=*/0,
           parse_hand("Q.2..")),
       std::invalid_argument);
   EXPECT_THROW(
@@ -211,6 +218,40 @@ TEST(SingleDummySolverTest, ValidatePositionRejectsInvalidLayouts)
           /*dummy_seat=*/2,
           parse_hand("A.2..")),
       std::invalid_argument);
+}
+
+TEST(SingleDummySolverTest, ValidatePositionAcceptsAdjacentKnownAndDummy)
+{
+  EXPECT_NO_THROW(
+      validate_position(
+          parse_hand("AKQ2..."),
+          parse_hand("3456..."),
+          /*known_seat=*/2,
+          /*dummy_seat=*/1,
+          parse_hand("JT9.23456..")));
+}
+
+TEST(SingleDummySolverTest, DefenderModeSolveReturnsKnownHandLeads)
+{
+  const auto result = solve_single_dummy(
+      parse_hand("AKQ2..."),
+      parse_hand("3456..."),
+      /*known_seat=*/2,
+      /*dummy_seat=*/1,
+      /*denomination=*/4,
+      parse_hand("JT9.23456.."));
+
+  ASSERT_FALSE(result.leads.empty());
+  EXPECT_EQ(result.leads.size(), 4u);
+  for (const auto& lead : result.leads)
+  {
+    EXPECT_EQ(lead.card.suit, 0);
+    EXPECT_GE(lead.min_tricks, 0);
+    EXPECT_LE(lead.min_tricks, 4);
+  }
+  EXPECT_GE(result.maximin_value, 0);
+  EXPECT_LE(result.maximin_value, 4);
+  EXPECT_FALSE(result.maximin_cards.empty());
 }
 
 TEST(SingleDummySolverTest, AvailableCardsForOpponentsRequiresThirteenCardHands)
@@ -587,6 +628,28 @@ TEST(SingleDummySolverTest, OpponentEmptyHandNeedsAdversarialSplit)
   query.hands[static_cast<std::size_t>(query.east_seat)] =
       parse_hand("QJT9...");
   EXPECT_FALSE(needs_adversarial_split(query, /*seat=*/1));
+}
+
+TEST(SingleDummySolverTest, DefenderModeMaximizeAxisIsKnownPlusPartner)
+{
+  // Known South, visible dummy East: maximize NS; pool is North+West.
+  AdversarialSplitQuery query{};
+  query.known_seat = 2;
+  query.dummy_seat = 1;
+  query.east_seat = 0;
+  query.west_seat = 3;
+  query.east_slots = 4;
+  query.west_slots = 4;
+  query.remaining_available = parse_hand("JT9.23456..");
+  query.hands[static_cast<std::size_t>(query.known_seat)] =
+      parse_hand("AKQ2...");
+  query.hands[static_cast<std::size_t>(query.dummy_seat)] =
+      parse_hand("3456...");
+
+  EXPECT_TRUE(needs_adversarial_split(query, /*seat=*/2));
+  EXPECT_TRUE(needs_adversarial_split(query, /*seat=*/0));
+  EXPECT_FALSE(needs_adversarial_split(query, /*seat=*/1));
+  EXPECT_TRUE(needs_adversarial_split(query, /*seat=*/3));
 }
 
 TEST(SingleDummySolverTest, RepartitionsBeforeEveryPartnershipPlayIncludingMidTrickFollows)
@@ -1322,6 +1385,49 @@ TEST(SingleDummySolverTest, OpeningLeadRejectsCardNotInAvailablePool)
           /*min_significant_rank=*/2,
           west_leads_missing_card),
       std::invalid_argument);
+}
+
+TEST(SingleDummySolverTest, DefenderOpeningLeadRejectsWhenNextMaximizeSeatIsUnknownPartner)
+{
+  // Known South, dummy East: after West leads, North (unknown partner) is next.
+  const OpeningLead west_leads_heart{3, card("H2")};
+  EXPECT_THROW(
+      solve_single_dummy(
+          parse_hand("AKQ2..."),
+          parse_hand("3456..."),
+          /*known_seat=*/2,
+          /*dummy_seat=*/1,
+          /*denomination=*/4,
+          parse_hand("JT9.23456.."),
+          {},
+          std::nullopt,
+          /*thread_count=*/0,
+          /*min_significant_rank=*/2,
+          west_leads_heart),
+      std::invalid_argument);
+}
+
+TEST(SingleDummySolverTest, DefenderOpeningLeadFromDummyEvaluatesKnownResponse)
+{
+  const OpeningLead east_leads_spade{1, card("S3")};
+  const auto after_lead = solve_single_dummy(
+      parse_hand("AKQ2..."),
+      parse_hand("3456..."),
+      /*known_seat=*/2,
+      /*dummy_seat=*/1,
+      /*denomination=*/4,
+      parse_hand("JT9.23456.."),
+      {},
+      std::nullopt,
+      /*thread_count=*/0,
+      /*min_significant_rank=*/2,
+      east_leads_spade);
+
+  ASSERT_FALSE(after_lead.leads.empty());
+  for (const auto& lead : after_lead.leads)
+  {
+    EXPECT_EQ(lead.card.suit, 0);
+  }
 }
 
 }  // namespace

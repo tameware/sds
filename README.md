@@ -1,8 +1,18 @@
 # SDS — single-dummy solver
 
-Exhaustive single-dummy maximin analysis for bridge: before each partnership
-play, opposition adversarially repartitions remaining unseen cards between East
-and West, then minimizes; partnership plays maximize.
+Exhaustive single-dummy maximin analysis for bridge: before each maximizing
+partnership play, opposition adversarially repartitions remaining unseen cards
+between the two pool seats, then minimizes; the maximizing side plays to
+maximize.
+
+When `--known` and `--dummy` are bridge partners (N–S or E–W), this is classic
+declarer single-dummy: both named hands are visible and maximize; the other two
+seats share the available pool.
+
+When they are adjacent (for example known South, dummy East), the solver runs
+**defender** single-dummy: maximize tricks for known and known’s partner; dummy
+is a fully known opponent; the available pool fills the other two seats
+(partner and the remaining opponent).
 
 ## Setup
 
@@ -44,8 +54,9 @@ available-card pool, and any constraint before the analysis output.
 
 Specify an opening lead as `--lead SEATCARD` (for example `--lead WH4` for
 West leads the ♥4). The table lists minimum tricks for each legal card the
-first partnership hand to play may contribute on that trick (following suit
-when required).
+first maximizing hand to play may contribute on that trick (following suit
+when required). That responding seat must be known or dummy (not the unknown
+partner in defender layouts).
 
 After changing `MODULE.bazel`, refresh the lockfile:
 

@@ -370,9 +370,16 @@ auto opponent_seats(int known_seat, int dummy_seat) -> std::pair<int, int>
   return {seats[0], seats[1]};
 }
 
-auto is_partnership_seat(int seat, int known_seat, int dummy_seat) -> bool
+auto partner_seat(int seat) -> int
 {
-  return seat == known_seat || seat == dummy_seat;
+  return seat ^ 2;
+}
+
+// Maximizing side is always known and known's bridge partner — not necessarily
+// the visible dummy seat (defender mode: dummy is a fixed opponent).
+auto is_partnership_seat(int seat, int known_seat) -> bool
+{
+  return seat == known_seat || seat == partner_seat(known_seat);
 }
 
 auto choose_combinations(
@@ -684,7 +691,7 @@ auto needs_adversarial_split(const GameState& state, int seat) -> bool
   {
     return false;
   }
-  if (is_partnership_seat(seat, state.known_seat, state.dummy_seat))
+  if (is_partnership_seat(seat, state.known_seat))
   {
     return true;
   }
@@ -816,8 +823,7 @@ auto evaluate_recursive(
   }
 
   const int seat = current_player(state);
-  const bool partnership =
-      is_partnership_seat(seat, state.known_seat, state.dummy_seat);
+  const bool partnership = is_partnership_seat(seat, state.known_seat);
   int result = 0;
   if (needs_adversarial_split(state, seat))
   {
@@ -893,7 +899,7 @@ auto apply_play(GameState state, const Card& card) -> GameState
   {
     record_trick_win_ranks(state);
     const int winner = trick_winner(state.trick, state.denomination, state.leader);
-    if (is_partnership_seat(winner, state.known_seat, state.dummy_seat))
+    if (is_partnership_seat(winner, state.known_seat))
     {
       ++state.partnership_tricks;
     }
@@ -1296,10 +1302,6 @@ auto validate_position(
   {
     throw std::invalid_argument("known and dummy seats must differ");
   }
-  if ((known_seat ^ dummy_seat) != 2)
-  {
-    throw std::invalid_argument("dummy must be partner of the known hand");
-  }
   if (known.size() != dummy.size())
   {
     throw std::invalid_argument("known and dummy must have the same number of cards");
@@ -1383,7 +1385,7 @@ auto apply_opening_lead(GameState state, const OpeningLead& opening_lead) -> Gam
     record_trick_win_ranks(state);
     const int winner =
         trick_winner(state.trick, state.denomination, state.leader);
-    if (is_partnership_seat(winner, state.known_seat, state.dummy_seat))
+    if (is_partnership_seat(winner, state.known_seat))
     {
       ++state.partnership_tricks;
     }
@@ -1617,7 +1619,7 @@ auto evaluate_lead(
   if (state.trick.size() == 4)
   {
     const int winner = trick_winner(state.trick, state.denomination, state.leader);
-    if (is_partnership_seat(winner, state.known_seat, state.dummy_seat))
+    if (is_partnership_seat(winner, state.known_seat))
     {
       ++state.partnership_tricks;
     }
@@ -1650,15 +1652,12 @@ auto seat_after_lead(int leader_seat) -> int
   return (leader_seat + 1) % kHands;
 }
 
-auto first_partnership_seat_to_play(
-    int leader_seat,
-    int known_seat,
-    int dummy_seat) -> int
+auto first_partnership_seat_to_play(int leader_seat, int known_seat) -> int
 {
   int seat = seat_after_lead(leader_seat);
   for (int step = 0; step < kHands; ++step)
   {
-    if (is_partnership_seat(seat, known_seat, dummy_seat))
+    if (is_partnership_seat(seat, known_seat))
     {
       return seat;
     }
@@ -1787,7 +1786,7 @@ auto evaluate_after_opening_lead(
       record_trick_win_ranks(state);
       const int winner =
           trick_winner(state.trick, state.denomination, state.leader);
-      if (is_partnership_seat(winner, state.known_seat, state.dummy_seat))
+      if (is_partnership_seat(winner, state.known_seat))
       {
         ++state.partnership_tricks;
       }
@@ -1941,10 +1940,13 @@ auto solve_single_dummy(
   int response_seat = -1;
   if (opening_lead.has_value())
   {
-    response_seat = first_partnership_seat_to_play(
-        opening_lead->seat,
-        known_seat,
-        dummy_seat);
+    response_seat = first_partnership_seat_to_play(opening_lead->seat, known_seat);
+    if (response_seat != known_seat && response_seat != dummy_seat)
+    {
+      throw std::invalid_argument(
+          "opening lead response seat is the unknown partner hand; "
+          "lead so a known or dummy seat plays first for the maximizing side");
+    }
     cards_to_evaluate = legal_response_cards_after_opening_lead(
         known,
         dummy,

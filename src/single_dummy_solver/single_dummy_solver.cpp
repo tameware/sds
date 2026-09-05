@@ -29,10 +29,14 @@ void print_usage()
       << "  Hands use PBN suit fields (e.g. AJT.2..).\n"
       << "  Omit --available when known and dummy each hold 13 cards.\n"
       << "  Seats are N/E/S/W; denomination is S/H/D/C/NT.\n"
+      << "  If known and dummy are partners, maximize that line (declarer).\n"
+      << "  If adjacent, maximize known+partner with dummy a visible opponent "
+         "(defender).\n"
       << "  CONSTRAINT is a redeal-style Python expression on deal.north/east/"
          "south/west (e.g. A in deal.east.spades and deal.west.hcp >= 8).\n"
       << "  LEAD is opening lead as seat plus card (e.g. WH4). Results list legal "
-         "follows for the first partnership hand to play on that trick.\n";
+         "follows for the first maximizing hand to play on that trick "
+         "(must be known or dummy).\n";
 }
 
 }  // namespace
