@@ -26,6 +26,9 @@ struct LeadResult
 {
   Card card;
   int min_tricks;
+  // True when goal pruning stopped short of the exact maximin, so min_tricks is
+  // only an upper bound on the true value.
+  bool min_tricks_upper_bound = false;
 };
 
 struct OpeningLead

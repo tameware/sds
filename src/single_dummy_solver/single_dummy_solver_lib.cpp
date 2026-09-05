@@ -1586,6 +1586,7 @@ struct LeadEvaluation
 {
   Card lead_card{};
   int tricks = 0;
+  bool tricks_upper_bound = false;
   EvaluationStats stats{};
 };
 
@@ -1644,6 +1645,8 @@ auto evaluate_lead(
     }
   }
   result.tricks = tricks;
+  result.tricks_upper_bound =
+      goal.has_value() && result.stats.goal_cutoffs > 0 && tricks < *goal;
   return result;
 }
 
@@ -1823,6 +1826,8 @@ auto evaluate_after_opening_lead(
     }
   }
   result.tricks = tricks;
+  result.tricks_upper_bound =
+      goal.has_value() && result.stats.goal_cutoffs > 0 && tricks < *goal;
   return result;
 }
 
@@ -1928,6 +1933,7 @@ auto solve_single_dummy(
   }
 
   std::map<Card, int> values;
+  std::map<Card, bool> upper_bounds;
   std::vector<std::map<Card, int>> matrix;
   int total_opposition_splits = 0;
   int total_alpha_beta_cutoffs = 0;
@@ -2061,6 +2067,7 @@ auto solve_single_dummy(
         lead_result.stats.transposition_table.bound_cutoffs();
     total_goal_cutoffs += lead_result.stats.goal_cutoffs;
     values[lead_result.lead_card] = lead_result.tricks;
+    upper_bounds[lead_result.lead_card] = lead_result.tricks_upper_bound;
     matrix.push_back({{lead_result.lead_card, lead_result.tricks}});
   }
 
@@ -2080,7 +2087,8 @@ auto solve_single_dummy(
   result.leads.reserve(ordered_known.size());
   for (const auto& card : ordered_known)
   {
-    result.leads.push_back(LeadResult{card, values.at(card)});
+    result.leads.push_back(
+        LeadResult{card, values.at(card), upper_bounds.at(card)});
   }
 
   result.maximin_value = 0;
@@ -2140,7 +2148,12 @@ auto format_result(const SingleDummyResult& result, bool show_info) -> std::stri
     {
       out << " *";
     }
-    out << "  " << lead.min_tricks << '\n';
+    out << "  ";
+    if (lead.min_tricks_upper_bound)
+    {
+      out << "<=";
+    }
+    out << lead.min_tricks << '\n';
   }
   return out.str();
 }
