@@ -242,7 +242,8 @@ TEST(SingleDummySolverTest, DefenderModeSolveReturnsKnownHandLeads)
       parse_hand("JT9.23456.."));
 
   ASSERT_FALSE(result.leads.empty());
-  EXPECT_EQ(result.leads.size(), 4u);
+  // AKQ collapse to one representative; deuce stays separate.
+  EXPECT_EQ(result.leads.size(), 2u);
   for (const auto& lead : result.leads)
   {
     EXPECT_EQ(lead.card.suit, 0);
@@ -464,7 +465,7 @@ TEST(SingleDummySolverTest, DealConstraintRankPinSurvivesMidDealRepartition)
       parse_hand("96432.AQ86.QT.A97"),
       std::string("9 in deal.east.spades and A in deal.west.clubs"));
 
-  EXPECT_EQ(result.leads.size(), 7u);
+  EXPECT_EQ(result.leads.size(), 6u);
   EXPECT_GT(result.combination_count, 0);
 }
 
@@ -579,7 +580,7 @@ TEST(SingleDummySolverTest, FourCardSpadePositionReportsMaximinPerLead)
       /*denomination=*/0,
       parse_hand("Q76543.45.."));
 
-  EXPECT_EQ(result.leads.size(), 4u);
+  EXPECT_EQ(result.leads.size(), 3u);
   EXPECT_GT(result.opposition_split_evaluations, result.combination_count);
 
   for (const auto& lead : result.leads)
@@ -590,18 +591,16 @@ TEST(SingleDummySolverTest, FourCardSpadePositionReportsMaximinPerLead)
 
   const auto king_min = find_min(result, "SK");
   const auto nine_min = find_min(result, "S9");
-  const auto eight_min = find_min(result, "S8");
   const auto heart_min = find_min(result, "H3");
   ASSERT_TRUE(king_min.has_value());
   ASSERT_TRUE(nine_min.has_value());
-  ASSERT_TRUE(eight_min.has_value());
   ASSERT_TRUE(heart_min.has_value());
+  EXPECT_FALSE(find_min(result, "S8").has_value());
 
   // Low spade leads let West duck; opposition re-splitting then places SQ to
   // defeat either dummy high or dummy low before East plays.
   EXPECT_EQ(*king_min, 2);
   EXPECT_EQ(*nine_min, 2);
-  EXPECT_EQ(*eight_min, 2);
   EXPECT_EQ(*heart_min, 3);
   EXPECT_EQ(result.maximin_value, 3);
   EXPECT_EQ(result.maximin_cards.size(), 1u);
@@ -683,11 +682,13 @@ TEST(SingleDummySolverTest, MidTrickRepartitionCapsClubAceLeadOnFiveCardDeal)
       /*denomination=*/0,
       parse_hand("743.JT873.T3."));
 
-  const auto spade_two_min = find_min(result, "S2");
+  // S2 is isomorphic with S5 on lead; the root table keeps only S5.
+  const auto spade_five_min = find_min(result, "S5");
   const auto club_ace_min = find_min(result, "CA");
-  ASSERT_TRUE(spade_two_min.has_value());
+  ASSERT_TRUE(spade_five_min.has_value());
   ASSERT_TRUE(club_ace_min.has_value());
-  EXPECT_EQ(*spade_two_min, 4);
+  EXPECT_FALSE(find_min(result, "S2").has_value());
+  EXPECT_EQ(*spade_five_min, 4);
   EXPECT_EQ(*club_ace_min, 3);
   EXPECT_EQ(result.maximin_value, 4);
 }
@@ -1009,6 +1010,25 @@ TEST(SingleDummySolverTest, DistinctRepresentativeRanksKeepSeparateTouchingCards
   EXPECT_EQ(reps.front(), 14);
 }
 
+TEST(SingleDummySolverTest, RootLeadTableUsesDistinctLegalMovesLikeInTreeSearch)
+{
+  // South ♠K98 ♥3: S9 and S8 are isomorphic on lead, so the root table should
+  // score only the distinct representative (S9), matching mid-tree move gen.
+  const auto result = solve_single_dummy(
+      parse_hand("K98.3.."),
+      parse_hand("AJT.2.."),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/0,
+      parse_hand("Q76543.45.."));
+
+  EXPECT_TRUE(find_min(result, "SK").has_value());
+  EXPECT_TRUE(find_min(result, "S9").has_value());
+  EXPECT_TRUE(find_min(result, "H3").has_value());
+  EXPECT_FALSE(find_min(result, "S8").has_value());
+  EXPECT_EQ(result.leads.size(), 3u);
+}
+
 TEST(SingleDummySolverTest, CardIsomorphismReducesSearchWithoutChangingResults)
 {
   const auto result = solve_single_dummy(
@@ -1041,6 +1061,7 @@ TEST(SingleDummySolverTest, FiveCardNtClubSevenLeadGuaranteesFourTricks)
 {
   // South: ♠T ♥J ♣K73   North: ♥T3 ♦A ♣Q8   Available: ♠KQJ ♥Q85 ♦J82 ♣5
   // Without void tracking during play, C7 drops from 4 to 3 (illegal heart re-deals).
+  // C3 is isomorphic with C7 on lead, so only C7 appears in the root table.
   const auto result = solve_single_dummy(
       parse_hand("T.J..K73"),
       parse_hand(".T3.A.Q8"),
@@ -1049,17 +1070,15 @@ TEST(SingleDummySolverTest, FiveCardNtClubSevenLeadGuaranteesFourTricks)
       /*denomination=*/4,
       parse_hand("KQJ.Q85.J82.5"));
 
-  const auto c3_min = find_min(result, "C3");
   const auto c7_min = find_min(result, "C7");
   const auto king_min = find_min(result, "CK");
-  ASSERT_TRUE(c3_min.has_value());
   ASSERT_TRUE(c7_min.has_value());
   ASSERT_TRUE(king_min.has_value());
-  EXPECT_EQ(*c3_min, 4);
+  EXPECT_FALSE(find_min(result, "C3").has_value());
   EXPECT_EQ(*c7_min, 4);
   EXPECT_EQ(*king_min, 3);
   EXPECT_EQ(result.maximin_value, 4);
-  EXPECT_EQ(result.maximin_cards.size(), 2u);
+  EXPECT_EQ(result.maximin_cards.size(), 1u);
 }
 
 TEST(SingleDummySolverTest, FiveCardClubAceOnlyMaximinOnClubAceLead)
@@ -1082,7 +1101,8 @@ TEST(SingleDummySolverTest, FiveCardClubAceOnlyMaximinOnClubAceLead)
   EXPECT_EQ(result.maximin_value, 4);
   EXPECT_EQ(*king_min, 4);
   EXPECT_EQ(*heart_min, 4);
-  EXPECT_EQ(result.maximin_cards.size(), 5u);
+  // S8 is isomorphic with S9, so four distinct maximin leads (not five cards).
+  EXPECT_EQ(result.maximin_cards.size(), 4u);
 }
 
 TEST(SingleDummySolverTest, FormatPositionDiagramShowsKnownHandsAndAvailablePool)

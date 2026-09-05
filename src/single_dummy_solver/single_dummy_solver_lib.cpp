@@ -747,6 +747,11 @@ auto evaluate_recursive(
 
 auto apply_play(GameState state, const Card& card) -> GameState;
 
+auto ordered_legal_moves(const GameState& state, int seat) -> std::vector<Card>
+{
+  return distinct_legal_cards(state, seat);
+}
+
 auto evaluate_moves(
     GameState state,
     EvaluationStats& stats,
@@ -768,7 +773,7 @@ auto evaluate_moves(
         beta);
     return value;
   }
-  const auto moves = distinct_legal_cards(state, seat);
+  const auto moves = ordered_legal_moves(state, seat);
   if (moves.empty())
   {
     throw std::runtime_error("no legal cards for seat " + std::to_string(seat));
@@ -1614,23 +1619,14 @@ auto evaluate_lead(
       available,
       deal_constraint,
       min_significant_rank);
-  remove_card(state.hands[static_cast<std::size_t>(known_seat)], lead_card);
-  state.trick.push_back(PlayedCard{known_seat, lead_card});
-  if (state.trick.size() == 4)
-  {
-    const int winner = trick_winner(state.trick, state.denomination, state.leader);
-    if (is_partnership_seat(winner, state.known_seat))
-    {
-      ++state.partnership_tricks;
-    }
-    state.leader = winner;
-    state.trick.clear();
-  }
 
   int tricks = std::numeric_limits<int>::max();
   for (const auto& split : root_splits)
   {
-    const auto split_state = apply_opponent_split(state, split);
+    auto split_state = apply_opponent_split(state, split);
+    split_state.force_next_play = true;
+    split_state.forced_play_seat = known_seat;
+    split_state.forced_play = lead_card;
     tricks = std::min(
         tricks,
         evaluate_recursive(
@@ -1719,7 +1715,7 @@ auto legal_response_cards_after_opening_lead(
       deal_constraint,
       opening_lead,
       min_significant_rank);
-  return distinct_legal_cards(probe, response_seat);
+  return ordered_legal_moves(probe, response_seat);
 }
 
 auto hand_for_seat(
@@ -1936,8 +1932,8 @@ auto solve_single_dummy(
   int total_transposition_bound_cutoffs = 0;
   int total_goal_cutoffs = 0;
 
-  std::vector<Card> cards_to_evaluate = known;
-  int response_seat = -1;
+  std::vector<Card> cards_to_evaluate;
+  int response_seat = known_seat;
   if (opening_lead.has_value())
   {
     response_seat = first_partnership_seat_to_play(opening_lead->seat, known_seat);
@@ -1964,6 +1960,23 @@ auto solve_single_dummy(
           "no legal partnership response to the opening lead");
     }
   }
+  else
+  {
+    const auto probe = make_initial_state(
+        known,
+        dummy,
+        known_seat,
+        dummy_seat,
+        denomination,
+        available,
+        deal_constraint,
+        min_significant_rank);
+    cards_to_evaluate = ordered_legal_moves(probe, known_seat);
+    if (cards_to_evaluate.empty())
+    {
+      throw std::invalid_argument("no legal cards for known seat to lead");
+    }
+  }
 
   std::vector<LeadEvaluation> lead_results(cards_to_evaluate.size());
   const auto evaluate_index = [&](std::size_t index) {
@@ -1986,7 +1999,7 @@ auto solve_single_dummy(
       return;
     }
     lead_results[index] = evaluate_lead(
-        known[index],
+        cards_to_evaluate[index],
         known,
         dummy,
         known_seat,
