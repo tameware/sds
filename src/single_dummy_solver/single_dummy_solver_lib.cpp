@@ -111,8 +111,7 @@ struct GameState
   int west_slots;
   std::array<int, kHands> void_suits{};
   std::array<int, kSuits> win_ranks{};
-  int min_significant_rank = 2;
-  DealConstraint deal_constraint;
+  std::vector<DealConstraintPin> pins;
   bool force_next_play = false;
   int forced_play_seat = -1;
   Card forced_play{};
@@ -156,6 +155,13 @@ auto held_mask_in_suit(const GameState& state, int suit) -> int
       {
         mask |= rank_bit(card.rank);
       }
+    }
+  }
+  for (const auto& card : state.remaining_available)
+  {
+    if (card.suit == suit)
+    {
+      mask |= rank_bit(card.rank);
     }
   }
   for (const auto& played : state.trick)
@@ -262,9 +268,66 @@ auto append_distinct_cards_in_suit(
   }
 }
 
+auto is_opponent_seat(const GameState& state, int seat) -> bool
+{
+  return seat == state.east_seat || seat == state.west_seat;
+}
+
+auto opponent_eligible_cards(const GameState& state, int seat) -> std::vector<Card>
+{
+  const int voids = state.void_suits[static_cast<std::size_t>(seat)];
+  std::vector<Card> eligible;
+  for (const auto& card : state.remaining_available)
+  {
+    if ((voids & (1 << card.suit)) != 0)
+    {
+      continue;
+    }
+    bool pinned_elsewhere = false;
+    for (const auto& pin : state.pins)
+    {
+      if (pin.suit == card.suit && pin.rank == card.rank && pin.seat != seat)
+      {
+        pinned_elsewhere = true;
+        break;
+      }
+    }
+    if (!pinned_elsewhere)
+    {
+      eligible.push_back(card);
+    }
+  }
+  return eligible;
+}
+
+auto opposition_slots_feasible(const GameState& state) -> bool
+{
+  if (state.east_slots + state.west_slots
+      != static_cast<int>(state.remaining_available.size()))
+  {
+    return false;
+  }
+  return static_cast<int>(opponent_eligible_cards(state, state.east_seat).size())
+      >= state.east_slots
+      && static_cast<int>(opponent_eligible_cards(state, state.west_seat).size())
+          >= state.west_slots;
+}
+
+auto holding_for_legal_moves(const GameState& state, int seat) -> std::vector<Card>
+{
+  if (is_opponent_seat(state, seat))
+  {
+    return opponent_eligible_cards(state, seat);
+  }
+  return state.hands[static_cast<std::size_t>(seat)];
+}
+
 auto distinct_legal_cards(const GameState& state, int seat) -> std::vector<Card>
 {
-  const auto& hand = state.hands[static_cast<std::size_t>(seat)];
+  // Opponents play from the shared unseen pool, excluding suits already shown
+  // out (and cards pinned to the other opponent). Follow-suit applies when the
+  // pool still has the lead suit and the seat is not void in it.
+  const auto hand = holding_for_legal_moves(state, seat);
   if (hand.empty())
   {
     return {};
@@ -333,7 +396,8 @@ auto transposition_position(const GameState& state) -> TranspositionPosition
       state.hands,
       trick_cards_as_pairs(state),
       state.void_suits,
-      state.win_ranks);
+      state.win_ranks,
+      state.remaining_available);
 }
 
 auto char_to_rank(char ch) -> int
@@ -482,8 +546,16 @@ auto current_player(const GameState& state) -> int
   return (state.leader + static_cast<int>(state.trick.size())) % kHands;
 }
 
-auto all_hands_empty(const GameState& state) -> bool
+auto play_complete(const GameState& state) -> bool
 {
+  if (!state.trick.empty())
+  {
+    return false;
+  }
+  if (!state.remaining_available.empty())
+  {
+    return false;
+  }
   for (const auto& hand : state.hands)
   {
     if (!hand.empty())
@@ -496,7 +568,7 @@ auto all_hands_empty(const GameState& state) -> bool
 
 auto legal_cards(const GameState& state, int seat) -> std::vector<Card>
 {
-  const auto& hand = state.hands[static_cast<std::size_t>(seat)];
+  const auto hand = holding_for_legal_moves(state, seat);
   if (hand.empty())
   {
     return {};
@@ -618,86 +690,6 @@ auto remove_card(std::vector<Card>& hand, const Card& card) -> void
   hand.erase(it);
 }
 
-auto apply_opponent_split(GameState state, const UnknownSplit& split) -> GameState
-{
-  const bool initial_opponent_assignment =
-      state.hands[static_cast<std::size_t>(state.east_seat)].empty()
-      && state.hands[static_cast<std::size_t>(state.west_seat)].empty();
-
-  state.hands[static_cast<std::size_t>(state.east_seat)] = split.first;
-  state.hands[static_cast<std::size_t>(state.west_seat)] = split.second;
-  state.remaining_available.clear();
-  std::sort(
-      state.hands[static_cast<std::size_t>(state.east_seat)].begin(),
-      state.hands[static_cast<std::size_t>(state.east_seat)].end());
-  std::sort(
-      state.hands[static_cast<std::size_t>(state.west_seat)].begin(),
-      state.hands[static_cast<std::size_t>(state.west_seat)].end());
-
-  if (initial_opponent_assignment)
-  {
-    for (const int seat : {state.east_seat, state.west_seat})
-    {
-      std::array<int, kSuits> suit_counts{};
-      for (const auto& card : state.hands[static_cast<std::size_t>(seat)])
-      {
-        ++suit_counts[static_cast<std::size_t>(card.suit)];
-      }
-      for (int suit = 0; suit < kSuits; ++suit)
-      {
-        if (suit_counts[static_cast<std::size_t>(suit)] == 0)
-        {
-          state.void_suits[static_cast<std::size_t>(seat)] |= 1 << suit;
-        }
-      }
-    }
-  }
-
-  return state;
-}
-
-auto gather_opponent_cards(const GameState& state) -> std::vector<Card>
-{
-  const auto& east_hand = state.hands[static_cast<std::size_t>(state.east_seat)];
-  const auto& west_hand = state.hands[static_cast<std::size_t>(state.west_seat)];
-  std::vector<Card> cards;
-  if (!east_hand.empty() || !west_hand.empty())
-  {
-    // Opponents were dealt; unplayed cards live in their hands only.
-    cards.insert(cards.end(), east_hand.begin(), east_hand.end());
-    cards.insert(cards.end(), west_hand.begin(), west_hand.end());
-  }
-  else
-  {
-    cards = state.remaining_available;
-  }
-  std::sort(cards.begin(), cards.end());
-  return cards;
-}
-
-auto needs_adversarial_split(const GameState& state, int seat) -> bool
-{
-  if (state.east_slots + state.west_slots == 0)
-  {
-    return false;
-  }
-  const auto unknown = gather_opponent_cards(state);
-  if (unknown.empty())
-  {
-    return false;
-  }
-  if (unknown.size()
-      != static_cast<std::size_t>(state.east_slots + state.west_slots))
-  {
-    return false;
-  }
-  if (is_partnership_seat(seat, state.known_seat))
-  {
-    return true;
-  }
-  return state.hands[static_cast<std::size_t>(seat)].empty();
-}
-
 auto mark_void_in_suit(GameState& state, int seat, int suit) -> void
 {
   state.void_suits[static_cast<std::size_t>(seat)] |= 1 << suit;
@@ -718,27 +710,6 @@ auto cards_eligible_for_seat(
   return eligible;
 }
 
-auto adversarial_splits(const GameState& state) -> std::vector<UnknownSplit>
-{
-  auto base_hands = state.hands;
-  base_hands[static_cast<std::size_t>(state.east_seat)].clear();
-  base_hands[static_cast<std::size_t>(state.west_seat)].clear();
-  return enumerate_constrained_opponent_splits(
-      gather_opponent_cards(state),
-      /*east_hand_size=*/0,
-      /*west_hand_size=*/0,
-      state.east_slots,
-      state.west_slots,
-      base_hands,
-      state.east_seat,
-      state.west_seat,
-      state.void_suits[static_cast<std::size_t>(state.east_seat)],
-      state.void_suits[static_cast<std::size_t>(state.west_seat)],
-      /*constraint=*/nullptr,
-      state.deal_constraint.is_active() ? &state.deal_constraint : nullptr,
-      state.min_significant_rank);
-}
-
 auto evaluate_recursive(
     GameState state,
     EvaluationStats& stats,
@@ -749,7 +720,21 @@ auto apply_play(GameState state, const Card& card) -> GameState;
 
 auto ordered_legal_moves(const GameState& state, int seat) -> std::vector<Card>
 {
-  return distinct_legal_cards(state, seat);
+  auto moves = distinct_legal_cards(state, seat);
+  if (!is_opponent_seat(state, seat))
+  {
+    return moves;
+  }
+  std::vector<Card> feasible;
+  for (const auto& card : moves)
+  {
+    const auto next = apply_play(state, card);
+    if (opposition_slots_feasible(next))
+    {
+      feasible.push_back(card);
+    }
+  }
+  return feasible;
 }
 
 auto evaluate_moves(
@@ -776,6 +761,19 @@ auto evaluate_moves(
   const auto moves = ordered_legal_moves(state, seat);
   if (moves.empty())
   {
+    if (is_opponent_seat(state, seat))
+    {
+      // Impossible opposition assignment. Count remaining tricks for the
+      // partnership so minimising seats avoid creating this position.
+      const int cards_left = static_cast<int>(state.remaining_available.size())
+          + static_cast<int>(
+                state.hands[static_cast<std::size_t>(state.known_seat)].size())
+          + static_cast<int>(
+                state.hands[static_cast<std::size_t>(state.dummy_seat)].size());
+      const int remaining_tricks =
+          (cards_left + 3 - static_cast<int>(state.trick.size())) / 4;
+      return state.partnership_tricks + remaining_tricks;
+    }
     throw std::runtime_error("no legal cards for seat " + std::to_string(seat));
   }
 
@@ -814,7 +812,7 @@ auto evaluate_recursive(
     int alpha,
     int beta) -> int
 {
-  if (all_hands_empty(state) && state.trick.empty())
+  if (play_complete(state))
   {
     return state.partnership_tricks;
   }
@@ -829,39 +827,7 @@ auto evaluate_recursive(
 
   const int seat = current_player(state);
   const bool partnership = is_partnership_seat(seat, state.known_seat);
-  int result = 0;
-  if (needs_adversarial_split(state, seat))
-  {
-    const auto splits = adversarial_splits(state);
-    if (splits.empty())
-    {
-      throw std::invalid_argument(
-          "no legal opposition split for remaining cards and void suits");
-    }
-    result = std::numeric_limits<int>::max();
-    for (const auto& split : splits)
-    {
-      ++stats.opposition_split_evaluations;
-      const auto split_state = apply_opponent_split(state, split);
-      const int value =
-          evaluate_moves(split_state, stats, partnership, alpha, beta);
-      result = std::min(result, value);
-      beta = std::min(beta, result);
-      if (alpha >= beta)
-      {
-        ++stats.alpha_beta_cutoffs;
-        break;
-      }
-      if (try_goal_cutoff(stats, result))
-      {
-        break;
-      }
-    }
-  }
-  else
-  {
-    result = evaluate_moves(state, stats, partnership, alpha, beta);
-  }
+  const int result = evaluate_moves(state, stats, partnership, alpha, beta);
 
   stats.transposition_table.store(position, result, alpha_orig, beta_orig);
   return result;
@@ -870,17 +836,13 @@ auto evaluate_recursive(
 auto apply_play(GameState state, const Card& card) -> GameState
 {
   const int seat = current_player(state);
-  remove_card(state.hands[static_cast<std::size_t>(seat)], card);
-  if (seat == state.east_seat || seat == state.west_seat)
+  if (is_opponent_seat(state, seat))
   {
-    const auto pool_it = std::find(
-        state.remaining_available.begin(),
-        state.remaining_available.end(),
-        card);
-    if (pool_it != state.remaining_available.end())
-    {
-      state.remaining_available.erase(pool_it);
-    }
+    remove_card(state.remaining_available, card);
+  }
+  else
+  {
+    remove_card(state.hands[static_cast<std::size_t>(seat)], card);
   }
   if (!state.trick.empty())
   {
@@ -922,7 +884,7 @@ auto make_initial_state(
     int denomination,
     const std::vector<Card>& available,
     const DealConstraint& deal_constraint,
-    int min_significant_rank) -> GameState
+    int /*min_significant_rank*/) -> GameState
 {
   const auto [east_seat, west_seat] = opponent_seats(known_seat, dummy_seat);
   GameState state{};
@@ -938,8 +900,12 @@ auto make_initial_state(
   state.partnership_tricks = 0;
   state.east_slots = static_cast<int>(known.size());
   state.west_slots = static_cast<int>(known.size());
-  state.deal_constraint = deal_constraint;
-  state.min_significant_rank = min_significant_rank;
+  state.pins = deal_constraint.pinned_cards();
+  for (const auto& void_suit : deal_constraint.void_suits())
+  {
+    state.void_suits[static_cast<std::size_t>(void_suit.seat)] |=
+        1 << void_suit.suit;
+  }
   return state;
 }
 
@@ -947,16 +913,10 @@ auto needs_adversarial_split_from_query(
     const AdversarialSplitQuery& query,
     int seat) -> bool
 {
-  GameState state{};
-  state.known_seat = query.known_seat;
-  state.dummy_seat = query.dummy_seat;
-  state.east_seat = query.east_seat;
-  state.west_seat = query.west_seat;
-  state.east_slots = query.east_slots;
-  state.west_slots = query.west_slots;
-  state.hands = query.hands;
-  state.remaining_available = query.remaining_available;
-  return needs_adversarial_split(state, seat);
+  (void)query;
+  (void)seat;
+  // Shared-pool play never repartitions opposition hands.
+  return false;
 }
 
 using SplitMixingSignature = std::array<std::pair<int, int>, kSuits>;
@@ -1373,9 +1333,16 @@ auto validate_opening_lead(
 auto apply_opening_lead(GameState state, const OpeningLead& opening_lead) -> GameState
 {
   state.leader = opening_lead.seat;
-  remove_card(
-      state.hands[static_cast<std::size_t>(opening_lead.seat)],
-      opening_lead.card);
+  if (is_opponent_seat(state, opening_lead.seat))
+  {
+    remove_card(state.remaining_available, opening_lead.card);
+  }
+  else
+  {
+    remove_card(
+        state.hands[static_cast<std::size_t>(opening_lead.seat)],
+        opening_lead.card);
+  }
   if (opening_lead.seat == state.east_seat)
   {
     --state.east_slots;
@@ -1604,7 +1571,6 @@ auto evaluate_lead(
     int denomination,
     const std::vector<Card>& available,
     const DealConstraint& deal_constraint,
-    const std::vector<UnknownSplit>& root_splits,
     std::optional<int> goal,
     int min_significant_rank) -> LeadEvaluation
 {
@@ -1621,25 +1587,14 @@ auto evaluate_lead(
       deal_constraint,
       min_significant_rank);
 
-  int tricks = std::numeric_limits<int>::max();
-  for (const auto& split : root_splits)
-  {
-    auto split_state = apply_opponent_split(state, split);
-    split_state.force_next_play = true;
-    split_state.forced_play_seat = known_seat;
-    split_state.forced_play = lead_card;
-    tricks = std::min(
-        tricks,
-        evaluate_recursive(
-            split_state,
-            result.stats,
-            std::numeric_limits<int>::min(),
-            std::numeric_limits<int>::max()));
-    if (try_goal_cutoff(result.stats, tricks))
-    {
-      break;
-    }
-  }
+  state.force_next_play = true;
+  state.forced_play_seat = known_seat;
+  state.forced_play = lead_card;
+  const int tricks = evaluate_recursive(
+      state,
+      result.stats,
+      std::numeric_limits<int>::min(),
+      std::numeric_limits<int>::max());
   result.tricks = tricks;
   result.tricks_upper_bound =
       goal.has_value() && result.stats.goal_cutoffs > 0 && tricks < *goal;
@@ -1750,7 +1705,6 @@ auto evaluate_after_opening_lead(
     const DealConstraint& deal_constraint,
     const OpeningLead& opening_lead,
     int response_seat,
-    const std::vector<UnknownSplit>& root_splits,
     std::optional<int> goal,
     int min_significant_rank) -> LeadEvaluation
 {
@@ -1758,69 +1712,25 @@ auto evaluate_after_opening_lead(
   result.lead_card = play_card;
   result.stats.goal = goal;
 
-  const auto [known_hand, dummy_hand] = hands_without_opening_lead(
+  auto state = make_initial_state(
       known,
       dummy,
-      known_seat,
-      dummy_seat,
-      opening_lead);
-  const bool opponent_led =
-      opening_lead.seat != known_seat && opening_lead.seat != dummy_seat;
-
-  auto state = make_initial_state(
-      known_hand,
-      dummy_hand,
       known_seat,
       dummy_seat,
       denomination,
       available,
       deal_constraint,
       min_significant_rank);
-  if (!opponent_led)
-  {
-    state.leader = opening_lead.seat;
-    state.trick.push_back(PlayedCard{opening_lead.seat, opening_lead.card});
-    if (state.trick.size() == 4)
-    {
-      record_trick_win_ranks(state);
-      const int winner =
-          trick_winner(state.trick, state.denomination, state.leader);
-      if (is_partnership_seat(winner, state.known_seat))
-      {
-        ++state.partnership_tricks;
-      }
-      state.leader = winner;
-      state.trick.clear();
-    }
-  }
-  else
-  {
-    state.leader = opening_lead.seat;
-  }
+  state = apply_opening_lead(state, opening_lead);
 
-  int tricks = std::numeric_limits<int>::max();
-  for (const auto& split : root_splits)
-  {
-    auto split_state = apply_opponent_split(state, split);
-    if (opponent_led)
-    {
-      split_state = apply_opening_lead(split_state, opening_lead);
-    }
-    split_state.force_next_play = true;
-    split_state.forced_play_seat = response_seat;
-    split_state.forced_play = play_card;
-    tricks = std::min(
-        tricks,
-        evaluate_recursive(
-            split_state,
-            result.stats,
-            std::numeric_limits<int>::min(),
-            std::numeric_limits<int>::max()));
-    if (try_goal_cutoff(result.stats, tricks))
-    {
-      break;
-    }
-  }
+  state.force_next_play = true;
+  state.forced_play_seat = response_seat;
+  state.forced_play = play_card;
+  const int tricks = evaluate_recursive(
+      state,
+      result.stats,
+      std::numeric_limits<int>::min(),
+      std::numeric_limits<int>::max());
   result.tricks = tricks;
   result.tricks_upper_bound =
       goal.has_value() && result.stats.goal_cutoffs > 0 && tricks < *goal;
@@ -1873,59 +1783,6 @@ auto solve_single_dummy(
   if (thread_count < 1)
   {
     throw std::invalid_argument("thread count must be at least 1");
-  }
-
-  std::array<std::vector<Card>, kHands> hands{};
-  auto known_for_split = known;
-  auto dummy_for_split = dummy;
-  std::vector<DealConstraintPin> extra_pins;
-  if (opening_lead.has_value())
-  {
-    const bool opponent_led =
-        opening_lead->seat != known_seat && opening_lead->seat != dummy_seat;
-    if (opponent_led)
-    {
-      extra_pins.push_back(DealConstraintPin{
-          opening_lead->seat,
-          opening_lead->card.suit,
-          opening_lead->card.rank});
-    }
-    else if (opening_lead->seat == known_seat
-             || opening_lead->seat == dummy_seat)
-    {
-      std::tie(known_for_split, dummy_for_split) = hands_without_opening_lead(
-          known,
-          dummy,
-          known_seat,
-          dummy_seat,
-          *opening_lead);
-    }
-  }
-  hands[static_cast<std::size_t>(known_seat)] = known_for_split;
-  hands[static_cast<std::size_t>(dummy_seat)] = dummy_for_split;
-
-  const auto [east_seat, west_seat] = opponent_seats(known_seat, dummy_seat);
-  const DealConstraint* constraint =
-      deal_constraint.is_active() ? &deal_constraint : nullptr;
-  const auto root_splits = enumerate_constrained_opponent_splits(
-      available,
-      /*east_hand_size=*/0,
-      /*west_hand_size=*/0,
-      static_cast<int>(known.size()),
-      static_cast<int>(known.size()),
-      hands,
-      east_seat,
-      west_seat,
-      /*east_void_suits=*/0,
-      /*west_void_suits=*/0,
-      constraint,
-      constraint,
-      min_significant_rank,
-      extra_pins);
-  if (root_splits.empty())
-  {
-    throw std::invalid_argument(
-        "no legal initial opposition split for available cards and constraint");
   }
 
   std::map<Card, int> values;
@@ -1999,7 +1856,6 @@ auto solve_single_dummy(
           deal_constraint,
           *opening_lead,
           response_seat,
-          root_splits,
           goal,
           min_significant_rank);
       return;
@@ -2013,7 +1869,6 @@ auto solve_single_dummy(
         denomination,
         available,
         deal_constraint,
-        root_splits,
         goal,
         min_significant_rank);
   };
@@ -2085,7 +1940,8 @@ auto solve_single_dummy(
   }
 
   SingleDummyResult result{};
-  result.combination_count = static_cast<int>(root_splits.size());
+  // Shared-pool search uses one unseen-card pool rather than enumerated deals.
+  result.combination_count = 1;
   result.opposition_split_evaluations = total_opposition_splits;
   result.alpha_beta_cutoffs = total_alpha_beta_cutoffs;
   result.isomorphism_skipped_moves = total_isomorphism_skipped;

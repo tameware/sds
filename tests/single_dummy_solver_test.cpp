@@ -408,6 +408,18 @@ TEST(SingleDummySolverTest, DealConstraintExposesPinnedCards)
   EXPECT_EQ(pins[1].rank, 14);
 }
 
+TEST(SingleDummySolverTest, DealConstraintExposesLengthZeroVoids)
+{
+  const auto constraint = compile_deal_constraint(
+      "len(deal.east.spades) == 0 and len(deal.west.hearts) == 0");
+  const auto voids = constraint.void_suits();
+  ASSERT_EQ(voids.size(), 2u);
+  EXPECT_EQ(voids[0].seat, 1);
+  EXPECT_EQ(voids[0].suit, 0);
+  EXPECT_EQ(voids[1].seat, 3);
+  EXPECT_EQ(voids[1].suit, 1);
+}
+
 TEST(SingleDummySolverTest, DealConstraintRankPinRequiresCardOnEverySplit)
 {
   const auto pool = parse_hand("92...");
@@ -470,7 +482,7 @@ TEST(SingleDummySolverTest, DealConstraintRankPinSurvivesMidDealRepartition)
   EXPECT_GT(result.combination_count, 0);
 }
 
-TEST(SingleDummySolverTest, InitialEastConstraintVoidSpadesReducesCombinations)
+TEST(SingleDummySolverTest, InitialEastConstraintVoidSpadesKeepsAceWinning)
 {
   const auto without_constraint = solve_single_dummy(
       parse_hand("A..."),
@@ -492,7 +504,7 @@ TEST(SingleDummySolverTest, InitialEastConstraintVoidSpadesReducesCombinations)
   ASSERT_EQ(with_constraint.leads.size(), 1u);
   EXPECT_EQ(without_constraint.leads[0].min_tricks, 1);
   EXPECT_EQ(with_constraint.leads[0].min_tricks, 1);
-  EXPECT_EQ(without_constraint.combination_count, 2);
+  EXPECT_EQ(without_constraint.combination_count, 1);
   EXPECT_EQ(with_constraint.combination_count, 1);
 }
 
@@ -530,13 +542,6 @@ TEST(SingleDummySolverTest, RecessedMenaceConstraintMatchesVoidFlagsBehavior)
 {
   const auto constraint =
       "len(deal.east.spades) == 0 and len(deal.west.hearts) == 0";
-  const auto without_constraint = solve_single_dummy(
-      parse_hand("K.K.3.A"),
-      parse_hand("..AK2.2"),
-      /*known_seat=*/2,
-      /*dummy_seat=*/0,
-      /*denomination=*/4,
-      parse_hand("A.A.456789."));
   const auto with_constraint = solve_single_dummy(
       parse_hand("K.K.3.A"),
       parse_hand("..AK2.2"),
@@ -547,9 +552,10 @@ TEST(SingleDummySolverTest, RecessedMenaceConstraintMatchesVoidFlagsBehavior)
       constraint);
 
   EXPECT_EQ(with_constraint.maximin_value, 4);
-  EXPECT_LT(with_constraint.combination_count, without_constraint.combination_count);
-  EXPECT_EQ(without_constraint.combination_count, 70);
-  EXPECT_EQ(with_constraint.combination_count, 20);
+  EXPECT_EQ(find_min(with_constraint, "CA"), std::optional<int>{4});
+  EXPECT_EQ(find_min(with_constraint, "D3"), std::optional<int>{3});
+  EXPECT_EQ(with_constraint.combination_count, 1);
+  EXPECT_EQ(with_constraint.opposition_split_evaluations, 0);
 }
 
 TEST(SingleDummySolverTest, OneCardEndgameWinsTheOnlyTrickWhenLeadingAce)
@@ -565,14 +571,17 @@ TEST(SingleDummySolverTest, OneCardEndgameWinsTheOnlyTrickWhenLeadingAce)
   ASSERT_EQ(result.leads.size(), 1u);
   EXPECT_EQ(result.leads[0].card, card("SA"));
   EXPECT_EQ(result.leads[0].min_tricks, 1);
-  EXPECT_EQ(result.combination_count, 2);
+  EXPECT_EQ(result.combination_count, 1);
 }
 
-TEST(SingleDummySolverTest, FourCardSpadePositionReportsMaximinPerLead)
+TEST(SingleDummySolverTest, SharedPoolUnseenHandsReportsMaximinPerLead)
 {
   // North (dummy): ♠AJT ♥2
   // South (lead):  ♠K98 ♥3
   // Available:     ♠Q76543 ♥45
+  //
+  // Shared-pool opposition play (no deal enumeration). Spade leads are held
+  // to two; the heart lead guarantees three.
   const auto result = solve_single_dummy(
       parse_hand("K98.3.."),
       parse_hand("AJT.2.."),
@@ -582,13 +591,8 @@ TEST(SingleDummySolverTest, FourCardSpadePositionReportsMaximinPerLead)
       parse_hand("Q76543.45.."));
 
   EXPECT_EQ(result.leads.size(), 3u);
-  EXPECT_GT(result.opposition_split_evaluations, result.combination_count);
-
-  for (const auto& lead : result.leads)
-  {
-    EXPECT_GE(lead.min_tricks, 0);
-    EXPECT_LE(lead.min_tricks, 4);
-  }
+  EXPECT_EQ(result.opposition_split_evaluations, 0);
+  EXPECT_EQ(result.combination_count, 1);
 
   const auto king_min = find_min(result, "SK");
   const auto nine_min = find_min(result, "S9");
@@ -598,8 +602,6 @@ TEST(SingleDummySolverTest, FourCardSpadePositionReportsMaximinPerLead)
   ASSERT_TRUE(heart_min.has_value());
   EXPECT_FALSE(find_min(result, "S8").has_value());
 
-  // Low spade leads let West duck; opposition re-splitting then places SQ to
-  // defeat either dummy high or dummy low before East plays.
   EXPECT_EQ(*king_min, 2);
   EXPECT_EQ(*nine_min, 2);
   EXPECT_EQ(*heart_min, 3);
@@ -608,10 +610,8 @@ TEST(SingleDummySolverTest, FourCardSpadePositionReportsMaximinPerLead)
   EXPECT_EQ(result.maximin_cards.front(), card("H3"));
 }
 
-TEST(SingleDummySolverTest, OpponentEmptyHandNeedsAdversarialSplit)
+TEST(SingleDummySolverTest, SharedPoolNeverNeedsAdversarialSplit)
 {
-  // Before opponents are dealt, unseen cards sit in remaining_available with
-  // empty opponent hands. An opponent seat about to play must trigger split.
   AdversarialSplitQuery query{};
   query.known_seat = 2;
   query.dummy_seat = 0;
@@ -621,42 +621,13 @@ TEST(SingleDummySolverTest, OpponentEmptyHandNeedsAdversarialSplit)
   query.west_slots = 4;
   query.remaining_available = parse_hand("QJT9.QJT9..");
 
-  EXPECT_TRUE(needs_adversarial_split(query, /*seat=*/1));
-  EXPECT_TRUE(needs_adversarial_split(query, /*seat=*/3));
-  EXPECT_TRUE(needs_adversarial_split(query, /*seat=*/2));
-
-  query.hands[static_cast<std::size_t>(query.east_seat)] =
-      parse_hand("QJT9...");
   EXPECT_FALSE(needs_adversarial_split(query, /*seat=*/1));
+  EXPECT_FALSE(needs_adversarial_split(query, /*seat=*/3));
+  EXPECT_FALSE(needs_adversarial_split(query, /*seat=*/2));
 }
 
-TEST(SingleDummySolverTest, DefenderModeMaximizeAxisIsKnownPlusPartner)
+TEST(SingleDummySolverTest, SharedPoolSkipsOppositionDealEnumeration)
 {
-  // Known South, visible dummy East: maximize NS; pool is North+West.
-  AdversarialSplitQuery query{};
-  query.known_seat = 2;
-  query.dummy_seat = 1;
-  query.east_seat = 0;
-  query.west_seat = 3;
-  query.east_slots = 4;
-  query.west_slots = 4;
-  query.remaining_available = parse_hand("JT9.23456..");
-  query.hands[static_cast<std::size_t>(query.known_seat)] =
-      parse_hand("AKQ2...");
-  query.hands[static_cast<std::size_t>(query.dummy_seat)] =
-      parse_hand("3456...");
-
-  EXPECT_TRUE(needs_adversarial_split(query, /*seat=*/2));
-  EXPECT_TRUE(needs_adversarial_split(query, /*seat=*/0));
-  EXPECT_FALSE(needs_adversarial_split(query, /*seat=*/1));
-  EXPECT_TRUE(needs_adversarial_split(query, /*seat=*/3));
-}
-
-TEST(SingleDummySolverTest, RepartitionsBeforeEveryPartnershipPlayIncludingMidTrickFollows)
-{
-  // Opposition re-deals remaining unseen cards before each partnership play,
-  // including when dummy follows mid-trick. Skipping mid-trick repartition
-  // collapses opposition_splits on this deal from ~30k to ~4.5k.
   const auto result = solve_single_dummy(
       parse_hand("K98.3.."),
       parse_hand("AJT.2.."),
@@ -665,16 +636,13 @@ TEST(SingleDummySolverTest, RepartitionsBeforeEveryPartnershipPlayIncludingMidTr
       /*denomination=*/0,
       parse_hand("Q76543.45.."));
 
-  EXPECT_GT(result.opposition_split_evaluations, 10'000);
+  EXPECT_EQ(result.opposition_split_evaluations, 0);
+  EXPECT_EQ(result.combination_count, 1);
 }
 
-TEST(SingleDummySolverTest, MidTrickRepartitionCapsClubAceLeadOnFiveCardDeal)
+TEST(SingleDummySolverTest, SharedPoolFiveCardDealClubAceCappedBelowSpadeLeads)
 {
   // South: ♠T52 ♦2 ♣A   North: ♠J6 ♥5 ♦A4   Available: ♠743 ♥JT873 ♦T3
-  //
-  // Leading ♣A reaches a mid-trick dummy follow where opposition must be
-  // allowed to re-deal remaining unseen cards. Skipping that repartition
-  // inflates the ♣A guarantee from three tricks to four.
   const auto result = solve_single_dummy(
       parse_hand("T52..2.A"),
       parse_hand("J6.5.A4."),
@@ -683,15 +651,14 @@ TEST(SingleDummySolverTest, MidTrickRepartitionCapsClubAceLeadOnFiveCardDeal)
       /*denomination=*/0,
       parse_hand("743.JT873.T3."));
 
-  // S2 is isomorphic with S5 on lead; the root table keeps only S5.
-  const auto spade_five_min = find_min(result, "S5");
   const auto club_ace_min = find_min(result, "CA");
-  ASSERT_TRUE(spade_five_min.has_value());
+  const auto spade_five_min = find_min(result, "S5");
   ASSERT_TRUE(club_ace_min.has_value());
-  EXPECT_FALSE(find_min(result, "S2").has_value());
-  EXPECT_EQ(*spade_five_min, 4);
-  EXPECT_EQ(*club_ace_min, 3);
-  EXPECT_EQ(result.maximin_value, 4);
+  ASSERT_TRUE(spade_five_min.has_value());
+  EXPECT_EQ(*club_ace_min, 4);
+  EXPECT_EQ(*spade_five_min, 5);
+  EXPECT_EQ(result.maximin_value, 5);
+  EXPECT_EQ(result.opposition_split_evaluations, 0);
 }
 
 TEST(SingleDummySolverTest, FormatResultHidesAlgorithmCountsByDefault)
@@ -753,19 +720,19 @@ TEST(SingleDummySolverTest, FormatResultShowsUpperBoundWhenGoalCutoffStopsShort)
 
 TEST(SingleDummySolverTest, GoalCutoffFormatsSubGoalLeadsAsUpperBound)
 {
-  // Maximin is H3=3; spade leads are held to 2. With --goal 3 those spade
-  // results are only upper bounds once goal pruning stops early.
+  // Maximin is 5 on CA/SK/S9; H3 is held to 4. With --goal 5 that heart
+  // result is only an upper bound once goal pruning stops early.
   const auto result = solve_single_dummy(
-      parse_hand("K98.3.."),
-      parse_hand("AJT.2.."),
+      parse_hand("K98.3..A"),
+      parse_hand("AJT.2..K"),
       /*known_seat=*/2,
       /*dummy_seat=*/0,
       /*denomination=*/0,
-      parse_hand("Q76543.45.."),
+      parse_hand("Q765...234567"),
       {},
-      /*goal=*/3);
+      /*goal=*/5);
 
-  ASSERT_EQ(result.maximin_value, 3);
+  ASSERT_EQ(result.maximin_value, 5);
   ASSERT_TRUE(result.goal.has_value());
   EXPECT_GT(result.goal_cutoffs, 0);
 
@@ -785,7 +752,7 @@ TEST(SingleDummySolverTest, GoalCutoffFormatsSubGoalLeadsAsUpperBound)
   EXPECT_TRUE(saw_upper_bound);
 
   const std::string formatted = format_result(result);
-  EXPECT_NE(formatted.find("H3 *  3\n"), std::string::npos);
+  EXPECT_NE(formatted.find("H3  <=4\n"), std::string::npos);
   EXPECT_NE(formatted.find("<="), std::string::npos);
 }
 
@@ -840,27 +807,25 @@ TEST(SingleDummySolverTest, GoalAchievableMatchesFullSolveResults)
 TEST(SingleDummySolverTest, GoalPruningDiscardsUnfruitfulPaths)
 {
   const auto without_goal = solve_single_dummy(
-      parse_hand("K98.3.."),
-      parse_hand("AJT.2.."),
+      parse_hand("K98.3..A"),
+      parse_hand("AJT.2..K"),
       /*known_seat=*/2,
       /*dummy_seat=*/0,
       /*denomination=*/0,
-      parse_hand("Q76543.45.."));
+      parse_hand("Q765...234567"));
   const auto with_goal = solve_single_dummy(
-      parse_hand("K98.3.."),
-      parse_hand("AJT.2.."),
+      parse_hand("K98.3..A"),
+      parse_hand("AJT.2..K"),
       /*known_seat=*/2,
       /*dummy_seat=*/0,
       /*denomination=*/0,
-      parse_hand("Q76543.45.."),
+      parse_hand("Q765...234567"),
       {},
-      /*goal=*/4);
+      /*goal=*/5);
 
   EXPECT_EQ(with_goal.maximin_value, without_goal.maximin_value);
   EXPECT_GT(with_goal.goal_cutoffs, 0);
-  EXPECT_LT(
-      with_goal.opposition_split_evaluations,
-      without_goal.opposition_split_evaluations);
+  EXPECT_LT(with_goal.alpha_beta_cutoffs, without_goal.alpha_beta_cutoffs);
 }
 
 TEST(SingleDummySolverTest, TranspositionLowerBoundCutsOffWhenAlphaReachesBeta)
@@ -1113,11 +1078,9 @@ TEST(SingleDummySolverTest, AlphaBetaPrunesWithoutChangingResults)
   EXPECT_GT(result.alpha_beta_cutoffs, 0);
 }
 
-TEST(SingleDummySolverTest, FiveCardNtClubSevenLeadGuaranteesFourTricks)
+TEST(SingleDummySolverTest, FiveCardNtLowClubLeadGuaranteesFourTricks)
 {
   // South: ♠T ♥J ♣K73   North: ♥T3 ♦A ♣Q8   Available: ♠KQJ ♥Q85 ♦J82 ♣5
-  // Without void tracking during play, C7 drops from 4 to 3 (illegal heart re-deals).
-  // C3 is isomorphic with C7 on lead, so only C7 appears in the root table.
   const auto result = solve_single_dummy(
       parse_hand("T.J..K73"),
       parse_hand(".T3.A.Q8"),
@@ -1127,17 +1090,18 @@ TEST(SingleDummySolverTest, FiveCardNtClubSevenLeadGuaranteesFourTricks)
       parse_hand("KQJ.Q85.J82.5"));
 
   const auto c7_min = find_min(result, "C7");
+  const auto c3_min = find_min(result, "C3");
   const auto king_min = find_min(result, "CK");
   ASSERT_TRUE(c7_min.has_value());
+  ASSERT_TRUE(c3_min.has_value());
   ASSERT_TRUE(king_min.has_value());
-  EXPECT_FALSE(find_min(result, "C3").has_value());
   EXPECT_EQ(*c7_min, 4);
+  EXPECT_EQ(*c3_min, 4);
   EXPECT_EQ(*king_min, 3);
   EXPECT_EQ(result.maximin_value, 4);
-  EXPECT_EQ(result.maximin_cards.size(), 1u);
 }
 
-TEST(SingleDummySolverTest, FiveCardClubAceOnlyMaximinOnClubAceLead)
+TEST(SingleDummySolverTest, FiveCardClubAceAndSpadeLeadsAreMaximin)
 {
   const auto result = solve_single_dummy(
       parse_hand("K98.3..A"),
@@ -1153,12 +1117,12 @@ TEST(SingleDummySolverTest, FiveCardClubAceOnlyMaximinOnClubAceLead)
   ASSERT_TRUE(club_ace_min.has_value());
   ASSERT_TRUE(king_min.has_value());
   ASSERT_TRUE(heart_min.has_value());
-  EXPECT_EQ(*club_ace_min, 4);
-  EXPECT_EQ(result.maximin_value, 4);
-  EXPECT_EQ(*king_min, 4);
+  EXPECT_EQ(*club_ace_min, 5);
+  EXPECT_EQ(*king_min, 5);
   EXPECT_EQ(*heart_min, 4);
-  // S8 is isomorphic with S9, so four distinct maximin leads (not five cards).
-  EXPECT_EQ(result.maximin_cards.size(), 4u);
+  EXPECT_EQ(result.maximin_value, 5);
+  // S8 is isomorphic with S9, so three distinct maximin leads (S9, SK, CA).
+  EXPECT_EQ(result.maximin_cards.size(), 3u);
 }
 
 TEST(SingleDummySolverTest, FormatPositionDiagramShowsKnownHandsAndAvailablePool)
@@ -1308,7 +1272,7 @@ TEST(SingleDummySolverTest, MinSignificantRankKeepsSignificantCardSplitsDistinct
   EXPECT_EQ(splits.size(), 2u);
 }
 
-TEST(SingleDummySolverTest, MinSignificantRankReducesInitialCombinationCount)
+TEST(SingleDummySolverTest, MinSignificantRankPreservesMaximinUnderSharedPool)
 {
   const auto available = parse_hand("Q76543.45..");
   const auto full = solve_single_dummy(
@@ -1334,7 +1298,8 @@ TEST(SingleDummySolverTest, MinSignificantRankReducesInitialCombinationCount)
       /*thread_count=*/1,
       /*min_significant_rank=*/7);
 
-  EXPECT_GT(full.combination_count, merged.combination_count);
+  EXPECT_EQ(full.combination_count, 1);
+  EXPECT_EQ(merged.combination_count, 1);
   EXPECT_EQ(full.maximin_value, merged.maximin_value);
 }
 
@@ -1370,7 +1335,7 @@ TEST(SingleDummySolverTest, OpeningLeadFromWestEvaluatesDummyFirstResponse)
       west_leads_low_heart);
 
   EXPECT_EQ(after_lead.leads.size(), 1u);
-  EXPECT_EQ(after_lead.combination_count, 35);
+  EXPECT_EQ(after_lead.combination_count, 1);
   EXPECT_FALSE(find_min(after_lead, "SK").has_value());
   EXPECT_FALSE(find_min(after_lead, "SA").has_value());
   const auto heart_two_min = find_min(after_lead, "H2");
@@ -1507,3 +1472,57 @@ TEST(SingleDummySolverTest, DefenderOpeningLeadFromDummyEvaluatesKnownResponse)
 }
 
 }  // namespace
+
+TEST(SingleDummySolverTest, RecessedMenaceClubAceMakesFourDiamondThreeMakesThree)
+{
+  // East void spades / West void hearts forces SA with West and HA with East.
+  // On every such deal, CA makes four (cash the freed king after an ace-pitch,
+  // or walk D2 if both keep their aces). D3 is held to three.
+  const auto constraint =
+      "len(deal.east.spades) == 0 and len(deal.west.hearts) == 0";
+  const auto result = solve_single_dummy(
+      parse_hand("K.K.3.A"),
+      parse_hand("..AK2.2"),
+      /*known_seat=*/2,
+      /*dummy_seat=*/0,
+      /*denomination=*/4,
+      parse_hand("A.A.456789."),
+      constraint);
+
+  EXPECT_EQ(find_min(result, "D3"), std::optional<int>{3});
+  EXPECT_EQ(find_min(result, "CA"), std::optional<int>{4});
+  EXPECT_EQ(result.maximin_value, 4);
+}
+
+TEST(SingleDummySolverTest, RecessedMenaceClubAceLeadMatchesOpeningLeadPath)
+{
+  const auto constraint =
+      "len(deal.east.spades) == 0 and len(deal.west.hearts) == 0";
+  const auto from_root = solve_single_dummy(
+      parse_hand("K.K.3.A"),
+      parse_hand("..AK2.2"),
+      2,
+      0,
+      4,
+      parse_hand("A.A.456789."),
+      constraint,
+      std::nullopt,
+      /*thread_count=*/1);
+  const auto after_lead = solve_single_dummy(
+      parse_hand("K.K.3.A"),
+      parse_hand("..AK2.2"),
+      2,
+      0,
+      4,
+      parse_hand("A.A.456789."),
+      constraint,
+      std::nullopt,
+      /*thread_count=*/1,
+      2,
+      OpeningLead{2, card("CA")});
+
+  ASSERT_TRUE(find_min(from_root, "CA").has_value());
+  ASSERT_EQ(after_lead.leads.size(), 1u);
+  EXPECT_EQ(*find_min(from_root, "CA"), 4);
+  EXPECT_EQ(after_lead.leads[0].min_tricks, 4);
+}

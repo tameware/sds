@@ -1,9 +1,10 @@
 # SDS — single-dummy solver
 
-Exhaustive single-dummy maximin analysis for bridge: before each maximizing
-partnership play, opposition adversarially repartitions remaining unseen cards
-between the two pool seats, then minimizes; the maximizing side plays to
-maximize.
+Exhaustive single-dummy maximin analysis for bridge: the two opposition seats
+share one pool of unseen cards. When an opponent plays, they may choose any
+remaining pool card to best advantage except cards in a suit they have already
+shown out of (follow-suit still applies while that suit remains and they are
+not void). The maximizing side plays to maximize against that defense.
 
 When `--known` and `--dummy` are bridge partners (N–S or E–W), this is classic
 declarer single-dummy: both named hands are visible and maximize; the other two
@@ -45,9 +46,9 @@ cards are inferred automatically.
 Expressions may reference `deal.{north,east,south,west}.{spades,hearts,diamonds,clubs}`,
 `deal.{seat}.hcp`, and `deal.{seat}.shape[index]`, honor membership (rank `2`–`14`
 or `A`/`K`/`Q`/`J`/`T` `in deal.{seat}.{suit}`), with `len(...)`, comparisons, and `and` / `or` / `not`.
-Rank membership pins that card to the seat on every opposition repartition while it
-remains unseen; length constraints such as `len(deal.east.spades) == 0` apply at the
-initial split and are enforced on later repartitions via void-suit tracking.
+Rank membership pins that card to the named seat while it remains unseen; length
+constraints such as `len(deal.east.spades) == 0` mark that seat void in the suit
+from the start of play.
 
 Add `--diagram` to print the known hands, opposition seats, the shared
 available-card pool, and any constraint before the analysis output.

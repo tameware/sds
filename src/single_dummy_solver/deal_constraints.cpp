@@ -738,6 +738,63 @@ auto collect_pins(const BoolExpr& expr, std::vector<DealConstraintPin>& pins)
   }
 }
 
+auto hand_suit_length_expr(const Expr* expr) -> const HandSuitLengthExpr*
+{
+  if (const auto* len_expr = dynamic_cast<const LenExpr*>(expr))
+  {
+    return dynamic_cast<const HandSuitLengthExpr*>(len_expr->inner_.get());
+  }
+  return dynamic_cast<const HandSuitLengthExpr*>(expr);
+}
+
+auto int_literal_value(const Expr* expr) -> std::optional<int>
+{
+  if (const auto* literal = dynamic_cast<const IntLiteral*>(expr))
+  {
+    return literal->value_;
+  }
+  return std::nullopt;
+}
+
+auto try_void_from_compare(const CompareExpr& expr)
+    -> std::optional<DealConstraintVoid>
+{
+  const auto* length = hand_suit_length_expr(expr.left_.get());
+  const auto right = int_literal_value(expr.right_.get());
+  if (length == nullptr || !right.has_value())
+  {
+    return std::nullopt;
+  }
+  const bool forces_empty =
+      (expr.op_ == CompareOp::eq && *right == 0)
+      || (expr.op_ == CompareOp::le && *right <= 0)
+      || (expr.op_ == CompareOp::lt && *right <= 1);
+  if (!forces_empty)
+  {
+    return std::nullopt;
+  }
+  return DealConstraintVoid{length->seat_, length->suit_};
+}
+
+auto collect_voids(
+    const BoolExpr& expr,
+    std::vector<DealConstraintVoid>& voids) -> void
+{
+  if (const auto* compare = dynamic_cast<const CompareExpr*>(&expr))
+  {
+    if (const auto void_suit = try_void_from_compare(*compare))
+    {
+      voids.push_back(*void_suit);
+    }
+    return;
+  }
+  if (const auto* and_expr = dynamic_cast<const AndExpr*>(&expr))
+  {
+    collect_voids(*and_expr->left_, voids);
+    collect_voids(*and_expr->right_, voids);
+  }
+}
+
 }  // namespace
 
 struct DealConstraint::Impl
@@ -749,10 +806,12 @@ struct DealConstraint::Impl
       return tree->eval_bool(hands);
     };
     collect_pins(*tree, pins);
+    collect_voids(*tree, voids);
   }
 
   std::function<bool(const std::array<std::vector<Card>, kHands>&)> evaluate;
   std::vector<DealConstraintPin> pins;
+  std::vector<DealConstraintVoid> voids;
 };
 
 DealConstraint::DealConstraint() = default;
@@ -784,6 +843,15 @@ auto DealConstraint::pinned_cards() const -> std::vector<DealConstraintPin>
     return {};
   }
   return impl_->pins;
+}
+
+auto DealConstraint::void_suits() const -> std::vector<DealConstraintVoid>
+{
+  if (!impl_)
+  {
+    return {};
+  }
+  return impl_->voids;
 }
 
 auto compile_deal_constraint(std::string_view expression) -> DealConstraint

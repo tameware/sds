@@ -29,6 +29,8 @@ struct TranspositionPosition
   int trick_size = 0;
   std::array<int, kHands> void_suits{};
   std::array<std::array<int, kHands>, kSuits> cards_per_suit{};
+  // Unseen pool ranks still in play (shared-pool opposition model).
+  std::array<int, kSuits> pool_aggregate{};
   std::array<int, kSuits> aggregate{};
   std::array<unsigned, kSuits> order_set{};
   std::array<unsigned, kSuits> win_mask{};
@@ -62,6 +64,7 @@ class TranspositionTable
   {
     std::uint64_t suit_lengths = 0;
     std::uint32_t context_hash = 0;
+    std::array<int, kSuits> pool_aggregate{};
     std::array<unsigned, kSuits> win_mask{};
     std::array<unsigned, kSuits> order_set{};
     TranspositionBound bound = TranspositionBound::Exact;
@@ -91,7 +94,8 @@ auto build_transposition_position(
     const std::array<std::vector<Card>, kHands>& hands,
     const std::vector<std::pair<int, Card>>& trick,
     const std::array<int, kHands>& void_suits,
-    const std::array<int, kSuits>& win_ranks) -> TranspositionPosition;
+    const std::array<int, kSuits>& win_ranks,
+    const std::vector<Card>& remaining_available = {}) -> TranspositionPosition;
 
 auto encode_suit_order_set(
     int suit,

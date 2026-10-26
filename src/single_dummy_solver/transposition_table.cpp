@@ -163,7 +163,8 @@ auto build_transposition_position(
     const std::array<std::vector<Card>, kHands>& hands,
     const std::vector<std::pair<int, Card>>& trick,
     const std::array<int, kHands>& void_suits,
-    const std::array<int, kSuits>& win_ranks) -> TranspositionPosition
+    const std::array<int, kSuits>& win_ranks,
+    const std::vector<Card>& remaining_available) -> TranspositionPosition
 {
   TranspositionPosition position{};
   position.partnership_tricks = partnership_tricks;
@@ -182,10 +183,17 @@ auto build_transposition_position(
     }
   }
 
+  for (const auto& card : remaining_available)
+  {
+    position.pool_aggregate[static_cast<std::size_t>(card.suit)] |=
+        rank_bit(card.rank);
+  }
+
   for (int suit = 0; suit < kSuits; ++suit)
   {
     position.aggregate[static_cast<std::size_t>(suit)] =
-        aggregate_for_suit(suit, hands, trick);
+        aggregate_for_suit(suit, hands, trick)
+        | position.pool_aggregate[static_cast<std::size_t>(suit)];
     position.order_set[static_cast<std::size_t>(suit)] = encode_suit_order_set(
         suit,
         position.aggregate[static_cast<std::size_t>(suit)],
@@ -246,6 +254,10 @@ auto TranspositionTable::context_hash(const TranspositionPosition& position)
   {
     hash = hash * 31u + static_cast<std::uint32_t>(void_mask);
   }
+  for (const int pool_mask : position.pool_aggregate)
+  {
+    hash = hash * 31u + static_cast<std::uint32_t>(pool_mask);
+  }
   for (int index = 0; index < position.trick_size; ++index)
   {
     hash = hash * 31u + static_cast<std::uint32_t>(position.trick_seats[index]);
@@ -280,8 +292,27 @@ auto TranspositionTable::matches(
   {
     return false;
   }
+  if (entry.pool_aggregate != position.pool_aggregate)
+  {
+    return false;
+  }
+  const bool shared_pool = std::any_of(
+      position.pool_aggregate.begin(),
+      position.pool_aggregate.end(),
+      [](int mask) { return mask != 0; });
   for (int suit = 0; suit < kSuits; ++suit)
   {
+    if (shared_pool)
+    {
+      // Relative-rank soft matching is unsafe while unseen cards sit in a shared
+      // pool rather than in assigned hands.
+      if (entry.order_set[static_cast<std::size_t>(suit)]
+          != position.order_set[static_cast<std::size_t>(suit)])
+      {
+        return false;
+      }
+      continue;
+    }
     if ((entry.win_mask[static_cast<std::size_t>(suit)]
          & position.order_set[static_cast<std::size_t>(suit)])
         != entry.order_set[static_cast<std::size_t>(suit)])
@@ -297,6 +328,10 @@ auto TranspositionTable::lookup(
     int& alpha,
     int& beta) -> std::optional<int>
 {
+  const bool shared_pool = std::any_of(
+      position.pool_aggregate.begin(),
+      position.pool_aggregate.end(),
+      [](int mask) { return mask != 0; });
   const auto& bucket = buckets_[bucket_index(position)];
   for (const auto& entry : bucket)
   {
@@ -310,9 +345,18 @@ auto TranspositionTable::lookup(
       case TranspositionBound::Exact:
         return entry.value;
       case TranspositionBound::Lower:
+        if (shared_pool)
+        {
+          // Bound cutoffs under shared-pool keys are not yet trustworthy.
+          return std::nullopt;
+        }
         alpha = std::max(alpha, entry.value);
         break;
       case TranspositionBound::Upper:
+        if (shared_pool)
+        {
+          return std::nullopt;
+        }
         beta = std::min(beta, entry.value);
         break;
     }
@@ -345,8 +389,16 @@ auto TranspositionTable::store(
   Entry entry{};
   entry.suit_lengths = suit_lengths_key(position);
   entry.context_hash = context_hash(position);
+  entry.pool_aggregate = position.pool_aggregate;
   entry.win_mask = position.win_mask;
-  entry.order_set = position.stored_order_set;
+  const bool shared_pool = std::any_of(
+      position.pool_aggregate.begin(),
+      position.pool_aggregate.end(),
+      [](int mask) { return mask != 0; });
+  // Shared-pool positions store the full order set for exact matching; dealt
+  // hands keep the DDS relative-rank projection under win_mask.
+  entry.order_set =
+      shared_pool ? position.order_set : position.stored_order_set;
   entry.bound = bound;
   entry.value = value;
 

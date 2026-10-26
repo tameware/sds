@@ -18,6 +18,12 @@ struct DealConstraintPin
   int rank = 0;
 };
 
+struct DealConstraintVoid
+{
+  int seat = 0;
+  int suit = 0;
+};
+
 class DealConstraint
 {
 public:
@@ -29,6 +35,10 @@ public:
   auto is_active() const -> bool;
 
   auto pinned_cards() const -> std::vector<DealConstraintPin>;
+
+  // Suits forced empty at the start of play by length-zero comparisons such as
+  // `len(deal.east.spades) == 0`.
+  auto void_suits() const -> std::vector<DealConstraintVoid>;
 
 private:
   struct Impl;
