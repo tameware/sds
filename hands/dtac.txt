@@ -1,0 +1,3 @@
+# NS make 7N, or 7H with no opening ruff
+
+--known T.AK764.AQ84.K87 --known-seat S --dummy AK964.QJ82.KJ.AT --dummy-seat N --available QJ75283.T593.9T76532.QJ942653 --trump N 
