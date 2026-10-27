@@ -1,0 +1,6 @@
+# 3 deals, 13 cards per hand, seed=55
+# One deal per line; pass a line to single_dummy_solver.
+
+--known AQ7.J72.K873.AQJ --known-seat S --dummy T64.QT.A42.KT984 --dummy-seat N --available KJ98532.AK986543.QJT965.76532 --trump H
+--known QJT985.J2.T73.Q8 --known-seat S --dummy AK72.9743.9642.2 --dummy-seat N --available 643.AKQT865.AKQJ85.AKJT976543 --trump NT
+--known 3.AKQT2.65.T9532 --known-seat S --dummy T754.64.AJ2.A764 --dummy-seat N --available AKQJ9862.J98753.KQT98743.KQJ8 --trump D
