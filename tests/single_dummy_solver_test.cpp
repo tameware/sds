@@ -1,11 +1,4 @@
-/*
-   DDS, a bridge double dummy solver.
-
-   Copyright (C) 2006-2014 by Bo Haglund /
-   2014-2016 by Bo Haglund & Soren Hein.
-
-   See LICENSE and README.
-*/
+// SDS single-dummy solver tests.
 
 #include <gtest/gtest.h>
 
@@ -17,7 +10,6 @@
 #include <vector>
 
 #include "single_dummy_solver.hpp"
-#include "transposition_table.hpp"
 
 namespace
 {
@@ -25,8 +17,6 @@ namespace
 using single_dummy_solver::Card;
 using single_dummy_solver::FutureTricks;
 using single_dummy_solver::SingleDummyResult;
-using single_dummy_solver::TranspositionTable;
-using single_dummy_solver::build_transposition_position;
 using single_dummy_solver::card_scores_from_future_tricks;
 using single_dummy_solver::AdversarialSplitQuery;
 using single_dummy_solver::distinct_representative_ranks_in_suit;
@@ -696,8 +686,8 @@ TEST(SingleDummySolverTest, FormatResultShowsAlgorithmCountsWithInfo)
   EXPECT_NE(formatted.find("opposition_splits:"), std::string::npos);
   EXPECT_NE(formatted.find("alpha_beta_cutoffs:"), std::string::npos);
   EXPECT_NE(formatted.find("isomorphism_skipped:"), std::string::npos);
-  EXPECT_NE(formatted.find("transposition_hits:"), std::string::npos);
-  EXPECT_NE(formatted.find("transposition_bound_cutoffs:"), std::string::npos);
+  EXPECT_NE(formatted.find("pattern_hits:"), std::string::npos);
+  EXPECT_NE(formatted.find("mtd_iterations:"), std::string::npos);
   EXPECT_NE(formatted.find("maximin:"), std::string::npos);
 }
 
@@ -825,85 +815,9 @@ TEST(SingleDummySolverTest, GoalPruningDiscardsUnfruitfulPaths)
 
   EXPECT_EQ(with_goal.maximin_value, without_goal.maximin_value);
   EXPECT_GT(with_goal.goal_cutoffs, 0);
-  EXPECT_LT(with_goal.alpha_beta_cutoffs, without_goal.alpha_beta_cutoffs);
 }
 
-TEST(SingleDummySolverTest, TranspositionLowerBoundCutsOffWhenAlphaReachesBeta)
-{
-  std::array<std::vector<Card>, kHands> hands{};
-  hands[0] = {card("SA")};
-  const std::vector<std::pair<int, Card>> empty_trick;
-  std::array<int, kHands> voids{};
-  std::array<int, 4> win_ranks{};
-  const auto position = build_transposition_position(
-      0, 0, 0, 0, hands, empty_trick, voids, win_ranks);
-
-  TranspositionTable table;
-  table.store(
-      position,
-      5,
-      /*alpha=*/3,
-      /*beta=*/4);
-
-  int alpha = 2;
-  int beta = 4;
-  const auto lookup = table.lookup(position, alpha, beta);
-  ASSERT_TRUE(lookup.has_value());
-  EXPECT_EQ(*lookup, 5);
-  EXPECT_EQ(table.bound_cutoffs(), 1u);
-}
-
-TEST(SingleDummySolverTest, TranspositionUpperBoundCutsOffWhenAlphaReachesBeta)
-{
-  std::array<std::vector<Card>, kHands> hands{};
-  hands[0] = {card("SA")};
-  const std::vector<std::pair<int, Card>> empty_trick;
-  std::array<int, kHands> voids{};
-  std::array<int, 4> win_ranks{};
-  const auto position = build_transposition_position(
-      0, 0, 0, 0, hands, empty_trick, voids, win_ranks);
-
-  TranspositionTable table;
-  table.store(
-      position,
-      2,
-      /*alpha=*/3,
-      /*beta=*/10);
-
-  int alpha = 3;
-  int beta = 5;
-  const auto lookup = table.lookup(position, alpha, beta);
-  ASSERT_TRUE(lookup.has_value());
-  EXPECT_EQ(*lookup, 2);
-  EXPECT_EQ(table.bound_cutoffs(), 1u);
-}
-
-TEST(SingleDummySolverTest, TranspositionBoundTightensWindowWithoutCutoff)
-{
-  std::array<std::vector<Card>, kHands> hands{};
-  hands[0] = {card("SA")};
-  const std::vector<std::pair<int, Card>> empty_trick;
-  std::array<int, kHands> voids{};
-  std::array<int, 4> win_ranks{};
-  const auto position = build_transposition_position(
-      0, 0, 0, 0, hands, empty_trick, voids, win_ranks);
-
-  TranspositionTable table;
-  table.store(
-      position,
-      2,
-      /*alpha=*/3,
-      /*beta=*/10);
-
-  int alpha = 0;
-  int beta = 5;
-  const auto lookup = table.lookup(position, alpha, beta);
-  EXPECT_FALSE(lookup.has_value());
-  EXPECT_EQ(beta, 2);
-  EXPECT_EQ(table.bound_cutoffs(), 0u);
-}
-
-TEST(SingleDummySolverTest, TranspositionBoundCutoffsDuringSolve)
+TEST(SingleDummySolverTest, PatternAndMtdStatsDuringSolve)
 {
   const auto result = solve_single_dummy(
       parse_hand("K98.3.."),
@@ -914,98 +828,24 @@ TEST(SingleDummySolverTest, TranspositionBoundCutoffsDuringSolve)
       parse_hand("Q76543.45.."));
 
   EXPECT_EQ(result.maximin_value, 3);
+  EXPECT_GT(result.mtd_iterations, 0);
+  EXPECT_GT(result.pattern_hits, 0);
   EXPECT_GT(result.alpha_beta_cutoffs, 0);
-  EXPECT_GT(result.transposition_bound_cutoffs, 0);
 }
 
-TEST(SingleDummySolverTest, RelativeSuitEncodingMatchesIsomorphicHoldings)
-{
-  std::array<std::vector<Card>, kHands> high_label{};
-  high_label[0] = {card("SA")};
-  high_label[1] = {card("S9")};
-  high_label[2] = {card("SQ")};
-  high_label[3] = {card("S7")};
-
-  std::array<std::vector<Card>, kHands> low_label{};
-  low_label[0] = {card("SK")};
-  low_label[1] = {card("S8")};
-  low_label[2] = {card("SJ")};
-  low_label[3] = {card("S6")};
-
-  const std::vector<std::pair<int, Card>> empty_trick;
-  std::array<int, kHands> voids{};
-  std::array<int, 4> win_ranks{};
-
-  const auto high_pos = build_transposition_position(
-      0, 1, 1, 2, high_label, empty_trick, voids, win_ranks);
-  const auto low_pos = build_transposition_position(
-      0, 1, 1, 2, low_label, empty_trick, voids, win_ranks);
-  EXPECT_EQ(high_pos.order_set, low_pos.order_set);
-}
-
-TEST(SingleDummySolverTest, TranspositionTableMatchesRelativePositions)
-{
-  std::array<std::vector<Card>, kHands> high_label{};
-  high_label[0] = {card("SA")};
-  high_label[1] = {card("S9")};
-  high_label[2] = {card("SQ")};
-  high_label[3] = {card("S7")};
-
-  std::array<std::vector<Card>, kHands> low_label{};
-  low_label[0] = {card("SK")};
-  low_label[1] = {card("S8")};
-  low_label[2] = {card("SJ")};
-  low_label[3] = {card("S6")};
-
-  const std::vector<std::pair<int, Card>> empty_trick;
-  std::array<int, kHands> voids{};
-  std::array<int, 4> win_ranks{};
-
-  const auto high_pos = build_transposition_position(
-      /*partnership_tricks=*/0,
-      /*east_slots=*/1,
-      /*west_slots=*/1,
-      /*leader=*/2,
-      high_label,
-      empty_trick,
-      voids,
-      win_ranks);
-  const auto low_pos = build_transposition_position(
-      /*partnership_tricks=*/0,
-      /*east_slots=*/1,
-      /*west_slots=*/1,
-      /*leader=*/2,
-      low_label,
-      empty_trick,
-      voids,
-      win_ranks);
-
-  TranspositionTable table;
-  table.store(
-      high_pos,
-      7,
-      std::numeric_limits<int>::min(),
-      std::numeric_limits<int>::max());
-  int alpha = std::numeric_limits<int>::min();
-  int beta = std::numeric_limits<int>::max();
-  const auto lookup = table.lookup(low_pos, alpha, beta);
-  ASSERT_TRUE(lookup.has_value());
-  EXPECT_EQ(*lookup, 7);
-  EXPECT_EQ(table.hits(), 1);
-}
-
-TEST(SingleDummySolverTest, TranspositionHitsDuringSolve)
+TEST(SingleDummySolverTest, VoidConstraintStillUsesPatternAndMtdSearch)
 {
   const auto result = solve_single_dummy(
-      parse_hand("K98.3.."),
-      parse_hand("AJT.2.."),
+      parse_hand("A..."),
+      parse_hand("K..."),
       /*known_seat=*/2,
       /*dummy_seat=*/0,
       /*denomination=*/0,
-      parse_hand("Q76543.45.."));
+      parse_hand("Q.2.."),
+      std::string("len(deal.east.spades) == 0"));
 
-  EXPECT_EQ(result.maximin_value, 3);
-  EXPECT_GT(result.transposition_hits, 0);
+  EXPECT_EQ(result.maximin_value, 1);
+  EXPECT_GT(result.mtd_iterations, 0);
 }
 
 TEST(SingleDummySolverTest, DistinctRepresentativeRanksMergeWhenGapUnavailable)

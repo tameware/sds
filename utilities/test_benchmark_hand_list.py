@@ -8,6 +8,7 @@ from unittest import mock
 
 from benchmark_hand_list import (
     default_solver_binary,
+    format_deal_timing,
     format_timing_summary,
     parse_deal_lines,
     repo_root,
@@ -52,7 +53,7 @@ class BenchmarkHandListTest(unittest.TestCase):
         self.assertEqual(stats["mean"], 2.5)
         self.assertEqual(stats["median"], 2.5)
 
-    def test_format_timing_summary_uses_one_decimal_place(self):
+    def test_format_timing_summary_uses_milliseconds(self):
         summary = format_timing_summary(
             {
                 "count": 3,
@@ -63,10 +64,14 @@ class BenchmarkHandListTest(unittest.TestCase):
             }
         )
         self.assertIn("deals: 3", summary)
-        self.assertIn("min: 0.0 s", summary)
-        self.assertIn("max: 12.3 s", summary)
-        self.assertIn("mean: 4.6 s", summary)
-        self.assertIn("median: 4.0 s", summary)
+        self.assertIn("min: 40 ms", summary)
+        self.assertIn("max: 12345 ms", summary)
+        self.assertIn("mean: 4567 ms", summary)
+        self.assertIn("median: 3999 ms", summary)
+
+    def test_format_deal_timing_uses_milliseconds(self):
+        self.assertEqual(format_deal_timing(12.345), "12345 ms")
+        self.assertEqual(format_deal_timing(0.04), "40 ms")
 
     def test_default_solver_binary_points_at_bazel_bin(self):
         self.assertEqual(
@@ -120,7 +125,16 @@ class BenchmarkHandListTest(unittest.TestCase):
 
         args = parse_args(["hands/list3_4_cards.txt", "--skip-build"])
         self.assertTrue(args.skip_build)
+        self.assertFalse(args.per_deal)
         self.assertEqual(args.solver_extra, [])
+
+    def test_parse_args_accepts_per_deal_flag(self):
+        from benchmark_hand_list import parse_args
+
+        args = parse_args(
+            ["hands/list3_4_cards.txt", "--skip-build", "--per-deal"]
+        )
+        self.assertTrue(args.per_deal)
 
     def test_parse_args_collects_solver_flags_after_double_dash(self):
         from benchmark_hand_list import parse_args
@@ -173,6 +187,47 @@ class BenchmarkHandListTest(unittest.TestCase):
             main(["hands/list3_4_cards.txt", "--skip-build"])
 
         self.assertEqual(separator_mock.call_count, 2)
+
+    def test_main_omits_per_deal_times_by_default(self):
+        from benchmark_hand_list import main
+
+        with mock.patch("benchmark_hand_list.build_solver"), mock.patch(
+            "benchmark_hand_list.run_deal",
+            side_effect=[1.25, 2.5],
+        ), mock.patch(
+            "benchmark_hand_list.parse_deal_lines",
+            return_value=["--known A...", "--known B..."],
+        ), mock.patch(
+            "benchmark_hand_list.print_deal_separator",
+        ), mock.patch("builtins.print") as print_mock:
+            main(["hands/list3_4_cards.txt", "--skip-build"])
+
+        printed_lines = [
+            str(call.args[0]) for call in print_mock.call_args_list if call.args
+        ]
+        self.assertEqual(len(printed_lines), 1)
+        self.assertIn("deals: 2", printed_lines[0])
+
+    def test_main_prints_per_deal_times_when_requested(self):
+        from benchmark_hand_list import main
+
+        with mock.patch("benchmark_hand_list.build_solver"), mock.patch(
+            "benchmark_hand_list.run_deal",
+            side_effect=[1.25, 2.5],
+        ), mock.patch(
+            "benchmark_hand_list.parse_deal_lines",
+            return_value=["--known A...", "--known B..."],
+        ), mock.patch(
+            "benchmark_hand_list.print_deal_separator",
+        ), mock.patch("builtins.print") as print_mock:
+            main(["hands/list3_4_cards.txt", "--skip-build", "--per-deal"])
+
+        printed_lines = [
+            str(call.args[0]) for call in print_mock.call_args_list if call.args
+        ]
+        self.assertEqual(printed_lines[0], "1250 ms")
+        self.assertEqual(printed_lines[1], "2500 ms")
+        self.assertIn("deals: 2", printed_lines[2])
 
     def test_print_deal_separator_writes_double_dash_line(self):
         from benchmark_hand_list import print_deal_separator

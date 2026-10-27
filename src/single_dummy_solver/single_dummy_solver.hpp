@@ -1,12 +1,4 @@
-/*
-   DDS, a bridge double dummy solver.
-
-   Copyright (C) 2006-2014 by Bo Haglund /
-   2014-2016 by Bo Haglund & Soren Hein.
-
-   See LICENSE and README.
-*/
-
+// SDS single-dummy solver (shared-pool opposition play).
 #pragma once
 
 #include <array>
@@ -51,8 +43,8 @@ struct SingleDummyResult
   int opposition_split_evaluations;
   int alpha_beta_cutoffs;
   int isomorphism_skipped_moves;
-  int transposition_hits;
-  int transposition_bound_cutoffs;
+  int pattern_hits;
+  int mtd_iterations;
   int goal_cutoffs;
   std::optional<int> goal;
   int maximin_value;

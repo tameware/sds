@@ -103,13 +103,21 @@ def summarize_times(times: list[float]) -> dict[str, float | int]:
     }
 
 
+def format_milliseconds(elapsed_seconds: float) -> str:
+    return f"{elapsed_seconds * 1000:.0f} ms"
+
+
+def format_deal_timing(elapsed_seconds: float) -> str:
+    return format_milliseconds(elapsed_seconds)
+
+
 def format_timing_summary(stats: dict[str, float | int]) -> str:
     lines = [
         f"deals: {stats['count']}",
-        f"min: {stats['min']:.1f} s",
-        f"max: {stats['max']:.1f} s",
-        f"mean: {stats['mean']:.1f} s",
-        f"median: {stats['median']:.1f} s",
+        f"min: {format_milliseconds(float(stats['min']))}",
+        f"max: {format_milliseconds(float(stats['max']))}",
+        f"mean: {format_milliseconds(float(stats['mean']))}",
+        f"median: {format_milliseconds(float(stats['median']))}",
     ]
     return "\n".join(lines)
 
@@ -138,6 +146,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="skip bazelisk build and use the existing binary",
     )
+    parser.add_argument(
+        "--per-deal",
+        action="store_true",
+        help="print elapsed time after each deal",
+    )
     benchmark_argv, solver_extra = split_benchmark_and_solver_argv(argv)
     args = parser.parse_args(benchmark_argv)
     args.solver_extra = solver_extra
@@ -155,7 +168,10 @@ def main(argv: list[str] | None = None) -> int:
     deals = parse_deal_lines(args.hand_list)
     times = []
     for deal_line in deals:
-        times.append(run_deal(args.binary, deal_line, extra_args=args.solver_extra))
+        elapsed = run_deal(args.binary, deal_line, extra_args=args.solver_extra)
+        times.append(elapsed)
+        if args.per_deal:
+            print(format_deal_timing(elapsed), flush=True)
         print_deal_separator()
     print(format_timing_summary(summarize_times(times)))
     return 0

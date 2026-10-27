@@ -1,11 +1,5 @@
-/*
-   DDS, a bridge double dummy solver.
-
-   Copyright (C) 2006-2014 by Bo Haglund /
-   2014-2016 by Bo Haglund & Soren Hein.
-
-   See LICENSE and README.
-*/
+// SDS single-dummy solver (shared-pool opposition play).
+// Search algorithms adapted from macroxue/bridge-solver (Apache-2.0 OR MIT).
 
 #include "single_dummy_solver.hpp"
 
@@ -25,8 +19,10 @@
 #include <utility>
 #include <vector>
 
+#include "bridge_search.hpp"
 #include "deal_constraints.hpp"
-#include "transposition_table.hpp"
+#include "game_state.hpp"
+#include "play_engine.hpp"
 
 namespace single_dummy_solver
 {
@@ -89,315 +85,13 @@ auto pins_from_constraint(const DealConstraint* pin_constraint)
   return pin_constraint->pinned_cards();
 }
 
-struct PlayedCard
-{
-  int seat;
-  Card card;
-};
-
-struct GameState
-{
-  int denomination;
-  int known_seat;
-  int dummy_seat;
-  int east_seat;
-  int west_seat;
-  std::array<std::vector<Card>, kHands> hands;
-  std::vector<Card> remaining_available;
-  int leader;
-  std::vector<PlayedCard> trick;
-  int partnership_tricks;
-  int east_slots;
-  int west_slots;
-  std::array<int, kHands> void_suits{};
-  std::array<int, kSuits> win_ranks{};
-  std::vector<DealConstraintPin> pins;
-  bool force_next_play = false;
-  int forced_play_seat = -1;
-  Card forced_play{};
-};
-
-struct EvaluationStats
-{
-  int opposition_split_evaluations = 0;
-  int alpha_beta_cutoffs = 0;
-  int isomorphism_skipped_moves = 0;
-  int goal_cutoffs = 0;
-  std::optional<int> goal;
-  TranspositionTable transposition_table;
-};
-
-auto try_goal_cutoff(EvaluationStats& stats, int value) -> bool
-{
-  if (stats.goal.has_value() && value < *stats.goal)
-  {
-    ++stats.goal_cutoffs;
-    return true;
-  }
-  return false;
-}
-
-constexpr int kRankBitmaskAll = 0x1FFF;
+using detail::apply_play;
+using detail::is_partnership_seat;
+using detail::ordered_legal_moves;
 
 auto rank_bit(int rank) -> int
 {
   return 1 << (rank - 2);
-}
-
-auto held_mask_in_suit(const GameState& state, int suit) -> int
-{
-  int mask = 0;
-  for (const auto& hand : state.hands)
-  {
-    for (const auto& card : hand)
-    {
-      if (card.suit == suit)
-      {
-        mask |= rank_bit(card.rank);
-      }
-    }
-  }
-  for (const auto& card : state.remaining_available)
-  {
-    if (card.suit == suit)
-    {
-      mask |= rank_bit(card.rank);
-    }
-  }
-  for (const auto& played : state.trick)
-  {
-    if (played.card.suit == suit)
-    {
-      mask |= rank_bit(played.card.rank);
-    }
-  }
-  return mask;
-}
-
-auto unavailable_mask_in_suit(const GameState& state, int suit) -> int
-{
-  return (~held_mask_in_suit(state, suit)) & kRankBitmaskAll;
-}
-
-struct SuitGroup
-{
-  int top_rank;
-  int gap;
-};
-
-auto suit_groups(int hand_mask) -> std::vector<SuitGroup>
-{
-  std::vector<SuitGroup> groups;
-  std::optional<int> above_bottom;
-  for (int top = 14; top >= 2;)
-  {
-    if ((hand_mask & rank_bit(top)) == 0)
-    {
-      --top;
-      continue;
-    }
-    int bottom = top;
-    while (bottom > 2 && (hand_mask & rank_bit(bottom - 1)) != 0)
-    {
-      --bottom;
-    }
-    int gap = 0;
-    if (above_bottom.has_value())
-    {
-      for (int rank = top + 1; rank <= *above_bottom - 1; ++rank)
-      {
-        gap |= rank_bit(rank);
-      }
-    }
-    groups.push_back(SuitGroup{top, gap});
-    above_bottom = bottom;
-    top = bottom - 1;
-  }
-  return groups;
-}
-
-auto representative_ranks_in_suit(
-    int hand_mask,
-    int unavailable_mask) -> std::vector<int>
-{
-  const auto groups = suit_groups(hand_mask);
-  std::vector<int> representatives;
-  for (std::size_t index = 0; index < groups.size();)
-  {
-    std::size_t merge_end = index;
-    while (merge_end + 1 < groups.size()
-           && (groups[merge_end + 1].gap & unavailable_mask)
-               == groups[merge_end + 1].gap)
-    {
-      ++merge_end;
-    }
-    representatives.push_back(groups[index].top_rank);
-    index = merge_end + 1;
-  }
-  return representatives;
-}
-
-auto hand_mask_in_suit(const std::vector<Card>& hand, int suit) -> int
-{
-  int mask = 0;
-  for (const auto& card : hand)
-  {
-    if (card.suit == suit)
-    {
-      mask |= rank_bit(card.rank);
-    }
-  }
-  return mask;
-}
-
-auto append_distinct_cards_in_suit(
-    const std::vector<Card>& hand,
-    int suit,
-    int unavailable_mask,
-    std::vector<Card>& moves) -> void
-{
-  const int hand_mask = hand_mask_in_suit(hand, suit);
-  if (hand_mask == 0)
-  {
-    return;
-  }
-  const auto ranks = representative_ranks_in_suit(hand_mask, unavailable_mask);
-  for (const int rank : ranks)
-  {
-    moves.push_back(Card{suit, rank});
-  }
-}
-
-auto is_opponent_seat(const GameState& state, int seat) -> bool
-{
-  return seat == state.east_seat || seat == state.west_seat;
-}
-
-auto opponent_eligible_cards(const GameState& state, int seat) -> std::vector<Card>
-{
-  const int voids = state.void_suits[static_cast<std::size_t>(seat)];
-  std::vector<Card> eligible;
-  for (const auto& card : state.remaining_available)
-  {
-    if ((voids & (1 << card.suit)) != 0)
-    {
-      continue;
-    }
-    bool pinned_elsewhere = false;
-    for (const auto& pin : state.pins)
-    {
-      if (pin.suit == card.suit && pin.rank == card.rank && pin.seat != seat)
-      {
-        pinned_elsewhere = true;
-        break;
-      }
-    }
-    if (!pinned_elsewhere)
-    {
-      eligible.push_back(card);
-    }
-  }
-  return eligible;
-}
-
-auto opposition_slots_feasible(const GameState& state) -> bool
-{
-  if (state.east_slots + state.west_slots
-      != static_cast<int>(state.remaining_available.size()))
-  {
-    return false;
-  }
-  return static_cast<int>(opponent_eligible_cards(state, state.east_seat).size())
-      >= state.east_slots
-      && static_cast<int>(opponent_eligible_cards(state, state.west_seat).size())
-          >= state.west_slots;
-}
-
-auto holding_for_legal_moves(const GameState& state, int seat) -> std::vector<Card>
-{
-  if (is_opponent_seat(state, seat))
-  {
-    return opponent_eligible_cards(state, seat);
-  }
-  return state.hands[static_cast<std::size_t>(seat)];
-}
-
-auto distinct_legal_cards(const GameState& state, int seat) -> std::vector<Card>
-{
-  // Opponents play from the shared unseen pool, excluding suits already shown
-  // out (and cards pinned to the other opponent). Follow-suit applies when the
-  // pool still has the lead suit and the seat is not void in it.
-  const auto hand = holding_for_legal_moves(state, seat);
-  if (hand.empty())
-  {
-    return {};
-  }
-  if (state.trick.empty())
-  {
-    std::vector<Card> moves;
-    for (int suit = 0; suit < kSuits; ++suit)
-    {
-      append_distinct_cards_in_suit(
-          hand, suit, unavailable_mask_in_suit(state, suit), moves);
-    }
-    return moves;
-  }
-
-  const int lead_suit = state.trick.front().card.suit;
-  const int lead_mask = hand_mask_in_suit(hand, lead_suit);
-  if (lead_mask != 0)
-  {
-    std::vector<Card> moves;
-    append_distinct_cards_in_suit(
-        hand,
-        lead_suit,
-        unavailable_mask_in_suit(state, lead_suit),
-        moves);
-    return moves;
-  }
-
-  std::vector<Card> moves;
-  for (int suit = 0; suit < kSuits; ++suit)
-  {
-    append_distinct_cards_in_suit(
-        hand, suit, unavailable_mask_in_suit(state, suit), moves);
-  }
-  return moves;
-}
-
-auto legal_cards(const GameState& state, int seat) -> std::vector<Card>;
-
-auto count_isomorphism_skipped(const GameState& state, int seat) -> int
-{
-  const auto full = legal_cards(state, seat);
-  const auto distinct = distinct_legal_cards(state, seat);
-  return static_cast<int>(full.size()) - static_cast<int>(distinct.size());
-}
-
-auto trick_cards_as_pairs(const GameState& state)
-    -> std::vector<std::pair<int, Card>>
-{
-  std::vector<std::pair<int, Card>> trick;
-  trick.reserve(state.trick.size());
-  for (const auto& played : state.trick)
-  {
-    trick.emplace_back(played.seat, played.card);
-  }
-  return trick;
-}
-
-auto transposition_position(const GameState& state) -> TranspositionPosition
-{
-  return build_transposition_position(
-      state.partnership_tricks,
-      state.east_slots,
-      state.west_slots,
-      state.leader,
-      state.hands,
-      trick_cards_as_pairs(state),
-      state.void_suits,
-      state.win_ranks,
-      state.remaining_available);
 }
 
 auto char_to_rank(char ch) -> int
@@ -434,16 +128,19 @@ auto opponent_seats(int known_seat, int dummy_seat) -> std::pair<int, int>
   return {seats[0], seats[1]};
 }
 
-auto partner_seat(int seat) -> int
+auto cards_eligible_for_seat(
+    const std::vector<Card>& pool,
+    int void_suits) -> std::vector<Card>
 {
-  return seat ^ 2;
-}
-
-// Maximizing side is always known and known's bridge partner — not necessarily
-// the visible dummy seat (defender mode: dummy is a fixed opponent).
-auto is_partnership_seat(int seat, int known_seat) -> bool
-{
-  return seat == known_seat || seat == partner_seat(known_seat);
+  std::vector<Card> eligible;
+  for (const auto& card : pool)
+  {
+    if ((void_suits & (1 << card.suit)) == 0)
+    {
+      eligible.push_back(card);
+    }
+  }
+  return eligible;
 }
 
 auto choose_combinations(
@@ -494,6 +191,16 @@ auto card_to_string(const Card& card) -> std::string
       + rank_to_char(card.rank);
 }
 
+auto erase_card(std::vector<Card>& hand, const Card& card) -> void
+{
+  const auto it = std::find(hand.begin(), hand.end(), card);
+  if (it == hand.end())
+  {
+    throw std::runtime_error("card not in hand: " + card_to_string(card));
+  }
+  hand.erase(it);
+}
+
 auto hand_to_suit_fields(const std::vector<Card>& hand) -> std::array<std::string, kSuits>
 {
   std::array<std::vector<int>, kSuits> ranks{};
@@ -539,341 +246,6 @@ auto format_pbn_suit_fields(
     out << fields[static_cast<std::size_t>(suit)];
   }
   return out.str();
-}
-
-auto current_player(const GameState& state) -> int
-{
-  return (state.leader + static_cast<int>(state.trick.size())) % kHands;
-}
-
-auto play_complete(const GameState& state) -> bool
-{
-  if (!state.trick.empty())
-  {
-    return false;
-  }
-  if (!state.remaining_available.empty())
-  {
-    return false;
-  }
-  for (const auto& hand : state.hands)
-  {
-    if (!hand.empty())
-    {
-      return false;
-    }
-  }
-  return true;
-}
-
-auto legal_cards(const GameState& state, int seat) -> std::vector<Card>
-{
-  const auto hand = holding_for_legal_moves(state, seat);
-  if (hand.empty())
-  {
-    return {};
-  }
-  if (state.trick.empty())
-  {
-    return hand;
-  }
-
-  const int lead_suit = state.trick.front().card.suit;
-  std::vector<Card> follow;
-  for (const auto& card : hand)
-  {
-    if (card.suit == lead_suit)
-    {
-      follow.push_back(card);
-    }
-  }
-  if (!follow.empty())
-  {
-    return follow;
-  }
-  return hand;
-}
-
-auto trick_winner(
-    const std::vector<PlayedCard>& trick,
-    int trump,
-    int leader) -> int
-{
-  const int lead_suit = trick.front().card.suit;
-  int best = 0;
-  for (int index = 1; index < static_cast<int>(trick.size()); ++index)
-  {
-    const auto& candidate = trick[static_cast<std::size_t>(index)];
-    const auto& best_card = trick[static_cast<std::size_t>(best)];
-    const bool candidate_trump = trump != 4 && candidate.card.suit == trump;
-    const bool best_trump = trump != 4 && best_card.card.suit == trump;
-    if (candidate_trump && !best_trump)
-    {
-      best = index;
-    }
-    else if (candidate_trump && best_trump)
-    {
-      if (candidate.card.rank > best_card.card.rank)
-      {
-        best = index;
-      }
-    }
-    else if (!candidate_trump && !best_trump)
-    {
-      if (candidate.card.suit == lead_suit
-          && (best_card.card.suit != lead_suit
-              || candidate.card.rank > best_card.card.rank))
-      {
-        best = index;
-      }
-    }
-  }
-  return (leader + best) % kHands;
-}
-
-auto winning_rank_mask_in_suit(int suit, int winning_rank, int aggregate) -> int
-{
-  int mask = 0;
-  for (int rank = winning_rank; rank <= 14; ++rank)
-  {
-    if ((aggregate & rank_bit(rank)) != 0)
-    {
-      mask |= rank_bit(rank);
-    }
-  }
-  return mask;
-}
-
-auto record_trick_win_ranks(GameState& state) -> void
-{
-  const int winner_index = [&]() {
-    const int winner_seat = trick_winner(state.trick, state.denomination, state.leader);
-    for (int index = 0; index < static_cast<int>(state.trick.size()); ++index)
-    {
-      const int seat = (state.leader + index) % kHands;
-      if (seat == winner_seat)
-      {
-        return index;
-      }
-    }
-    return 0;
-  }();
-
-  const auto& winning_card = state.trick[static_cast<std::size_t>(winner_index)].card;
-  const int lead_suit = state.trick.front().card.suit;
-  const bool trump_contract = state.denomination != 4;
-  const bool wins_by_trump =
-      trump_contract && winning_card.suit == state.denomination;
-  const bool wins_by_lead =
-      !wins_by_trump && winning_card.suit == lead_suit;
-
-  if (!wins_by_trump && !wins_by_lead)
-  {
-    return;
-  }
-
-  const int suit = winning_card.suit;
-  const int aggregate = held_mask_in_suit(state, suit);
-  state.win_ranks[static_cast<std::size_t>(suit)] |= winning_rank_mask_in_suit(
-      suit,
-      winning_card.rank,
-      aggregate);
-}
-
-auto remove_card(std::vector<Card>& hand, const Card& card) -> void
-{
-  const auto it = std::find(hand.begin(), hand.end(), card);
-  if (it == hand.end())
-  {
-    throw std::runtime_error("card not in hand: " + card_to_string(card));
-  }
-  hand.erase(it);
-}
-
-auto mark_void_in_suit(GameState& state, int seat, int suit) -> void
-{
-  state.void_suits[static_cast<std::size_t>(seat)] |= 1 << suit;
-}
-
-auto cards_eligible_for_seat(
-    const std::vector<Card>& pool,
-    int void_suits) -> std::vector<Card>
-{
-  std::vector<Card> eligible;
-  for (const auto& card : pool)
-  {
-    if ((void_suits & (1 << card.suit)) == 0)
-    {
-      eligible.push_back(card);
-    }
-  }
-  return eligible;
-}
-
-auto evaluate_recursive(
-    GameState state,
-    EvaluationStats& stats,
-    int alpha,
-    int beta) -> int;
-
-auto apply_play(GameState state, const Card& card) -> GameState;
-
-auto ordered_legal_moves(const GameState& state, int seat) -> std::vector<Card>
-{
-  auto moves = distinct_legal_cards(state, seat);
-  if (!is_opponent_seat(state, seat))
-  {
-    return moves;
-  }
-  std::vector<Card> feasible;
-  for (const auto& card : moves)
-  {
-    const auto next = apply_play(state, card);
-    if (opposition_slots_feasible(next))
-    {
-      feasible.push_back(card);
-    }
-  }
-  return feasible;
-}
-
-auto evaluate_moves(
-    GameState state,
-    EvaluationStats& stats,
-    bool maximize,
-    int alpha,
-    int beta) -> int
-{
-  const int seat = current_player(state);
-  stats.isomorphism_skipped_moves += count_isomorphism_skipped(state, seat);
-  if (state.force_next_play && seat == state.forced_play_seat)
-  {
-    auto next_state = state;
-    next_state.force_next_play = false;
-    next_state.forced_play_seat = -1;
-    const int value = evaluate_recursive(
-        apply_play(next_state, state.forced_play),
-        stats,
-        alpha,
-        beta);
-    return value;
-  }
-  const auto moves = ordered_legal_moves(state, seat);
-  if (moves.empty())
-  {
-    if (is_opponent_seat(state, seat))
-    {
-      // Impossible opposition assignment. Count remaining tricks for the
-      // partnership so minimising seats avoid creating this position.
-      const int cards_left = static_cast<int>(state.remaining_available.size())
-          + static_cast<int>(
-                state.hands[static_cast<std::size_t>(state.known_seat)].size())
-          + static_cast<int>(
-                state.hands[static_cast<std::size_t>(state.dummy_seat)].size());
-      const int remaining_tricks =
-          (cards_left + 3 - static_cast<int>(state.trick.size())) / 4;
-      return state.partnership_tricks + remaining_tricks;
-    }
-    throw std::runtime_error("no legal cards for seat " + std::to_string(seat));
-  }
-
-  int result = maximize ? std::numeric_limits<int>::min()
-                        : std::numeric_limits<int>::max();
-  for (const auto& card : moves)
-  {
-    const int value =
-        evaluate_recursive(apply_play(state, card), stats, alpha, beta);
-    if (maximize)
-    {
-      result = std::max(result, value);
-      alpha = std::max(alpha, result);
-    }
-    else
-    {
-      result = std::min(result, value);
-      beta = std::min(beta, result);
-    }
-    if (alpha >= beta)
-    {
-      ++stats.alpha_beta_cutoffs;
-      break;
-    }
-    if (!maximize && try_goal_cutoff(stats, result))
-    {
-      break;
-    }
-  }
-  return result;
-}
-
-auto evaluate_recursive(
-    GameState state,
-    EvaluationStats& stats,
-    int alpha,
-    int beta) -> int
-{
-  if (play_complete(state))
-  {
-    return state.partnership_tricks;
-  }
-
-  const int alpha_orig = alpha;
-  const int beta_orig = beta;
-  const auto position = transposition_position(state);
-  if (const auto cached = stats.transposition_table.lookup(position, alpha, beta))
-  {
-    return *cached;
-  }
-
-  const int seat = current_player(state);
-  const bool partnership = is_partnership_seat(seat, state.known_seat);
-  const int result = evaluate_moves(state, stats, partnership, alpha, beta);
-
-  stats.transposition_table.store(position, result, alpha_orig, beta_orig);
-  return result;
-}
-
-auto apply_play(GameState state, const Card& card) -> GameState
-{
-  const int seat = current_player(state);
-  if (is_opponent_seat(state, seat))
-  {
-    remove_card(state.remaining_available, card);
-  }
-  else
-  {
-    remove_card(state.hands[static_cast<std::size_t>(seat)], card);
-  }
-  if (!state.trick.empty())
-  {
-    const int lead_suit = state.trick.front().card.suit;
-    if (card.suit != lead_suit)
-    {
-      mark_void_in_suit(state, seat, lead_suit);
-    }
-  }
-  state.trick.push_back(PlayedCard{seat, card});
-  if (seat == state.east_seat)
-  {
-    --state.east_slots;
-  }
-  else if (seat == state.west_seat)
-  {
-    --state.west_slots;
-  }
-
-  if (state.trick.size() == 4)
-  {
-    record_trick_win_ranks(state);
-    const int winner = trick_winner(state.trick, state.denomination, state.leader);
-    if (is_partnership_seat(winner, state.known_seat))
-    {
-      ++state.partnership_tricks;
-    }
-    state.leader = winner;
-    state.trick.clear();
-  }
-  return state;
 }
 
 auto make_initial_state(
@@ -971,13 +343,6 @@ auto needs_adversarial_split(const AdversarialSplitQuery& query, int seat)
     -> bool
 {
   return needs_adversarial_split_from_query(query, seat);
-}
-
-auto distinct_representative_ranks_in_suit(
-    int hand_mask,
-    int unavailable_mask) -> std::vector<int>
-{
-  return representative_ranks_in_suit(hand_mask, unavailable_mask);
 }
 
 auto parse_card(std::string_view text) -> Card
@@ -1330,41 +695,11 @@ auto validate_opening_lead(
   }
 }
 
-auto apply_opening_lead(GameState state, const OpeningLead& opening_lead) -> GameState
+auto apply_opening_lead(GameState state, const OpeningLead& opening_lead)
+    -> GameState
 {
   state.leader = opening_lead.seat;
-  if (is_opponent_seat(state, opening_lead.seat))
-  {
-    remove_card(state.remaining_available, opening_lead.card);
-  }
-  else
-  {
-    remove_card(
-        state.hands[static_cast<std::size_t>(opening_lead.seat)],
-        opening_lead.card);
-  }
-  if (opening_lead.seat == state.east_seat)
-  {
-    --state.east_slots;
-  }
-  else if (opening_lead.seat == state.west_seat)
-  {
-    --state.west_slots;
-  }
-  state.trick.push_back(PlayedCard{opening_lead.seat, opening_lead.card});
-  if (state.trick.size() == 4)
-  {
-    record_trick_win_ranks(state);
-    const int winner =
-        trick_winner(state.trick, state.denomination, state.leader);
-    if (is_partnership_seat(winner, state.known_seat))
-    {
-      ++state.partnership_tricks;
-    }
-    state.leader = winner;
-    state.trick.clear();
-  }
-  return state;
+  return apply_play(state, opening_lead.card);
 }
 
 auto hands_without_opening_lead(
@@ -1379,11 +714,11 @@ auto hands_without_opening_lead(
   auto dummy_hand = dummy;
   if (opening_lead.seat == known_seat)
   {
-    remove_card(known_hand, opening_lead.card);
+    erase_card(known_hand, opening_lead.card);
   }
   else if (opening_lead.seat == dummy_seat)
   {
-    remove_card(dummy_hand, opening_lead.card);
+    erase_card(dummy_hand, opening_lead.card);
   }
   return {known_hand, dummy_hand};
 }
@@ -1559,7 +894,7 @@ struct LeadEvaluation
   Card lead_card{};
   int tricks = 0;
   bool tricks_upper_bound = false;
-  EvaluationStats stats{};
+  SearchStats stats{};
 };
 
 auto evaluate_lead(
@@ -1590,11 +925,7 @@ auto evaluate_lead(
   state.force_next_play = true;
   state.forced_play_seat = known_seat;
   state.forced_play = lead_card;
-  const int tricks = evaluate_recursive(
-      state,
-      result.stats,
-      std::numeric_limits<int>::min(),
-      std::numeric_limits<int>::max());
+  const int tricks = search_partnership_tricks(state, result.stats);
   result.tricks = tricks;
   result.tricks_upper_bound =
       goal.has_value() && result.stats.goal_cutoffs > 0 && tricks < *goal;
@@ -1726,11 +1057,7 @@ auto evaluate_after_opening_lead(
   state.force_next_play = true;
   state.forced_play_seat = response_seat;
   state.forced_play = play_card;
-  const int tricks = evaluate_recursive(
-      state,
-      result.stats,
-      std::numeric_limits<int>::min(),
-      std::numeric_limits<int>::max());
+  const int tricks = search_partnership_tricks(state, result.stats);
   result.tricks = tricks;
   result.tricks_upper_bound =
       goal.has_value() && result.stats.goal_cutoffs > 0 && tricks < *goal;
@@ -1791,8 +1118,8 @@ auto solve_single_dummy(
   int total_opposition_splits = 0;
   int total_alpha_beta_cutoffs = 0;
   int total_isomorphism_skipped = 0;
-  int total_transposition_hits = 0;
-  int total_transposition_bound_cutoffs = 0;
+  int total_pattern_hits = 0;
+  int total_mtd_iterations = 0;
   int total_goal_cutoffs = 0;
 
   std::vector<Card> cards_to_evaluate;
@@ -1930,9 +1257,8 @@ auto solve_single_dummy(
     total_opposition_splits += lead_result.stats.opposition_split_evaluations;
     total_alpha_beta_cutoffs += lead_result.stats.alpha_beta_cutoffs;
     total_isomorphism_skipped += lead_result.stats.isomorphism_skipped_moves;
-    total_transposition_hits += lead_result.stats.transposition_table.hits();
-    total_transposition_bound_cutoffs +=
-        lead_result.stats.transposition_table.bound_cutoffs();
+    total_pattern_hits += lead_result.stats.pattern_hits;
+    total_mtd_iterations += lead_result.stats.mtd_iterations;
     total_goal_cutoffs += lead_result.stats.goal_cutoffs;
     values[lead_result.lead_card] = lead_result.tricks;
     upper_bounds[lead_result.lead_card] = lead_result.tricks_upper_bound;
@@ -1945,8 +1271,8 @@ auto solve_single_dummy(
   result.opposition_split_evaluations = total_opposition_splits;
   result.alpha_beta_cutoffs = total_alpha_beta_cutoffs;
   result.isomorphism_skipped_moves = total_isomorphism_skipped;
-  result.transposition_hits = total_transposition_hits;
-  result.transposition_bound_cutoffs = total_transposition_bound_cutoffs;
+  result.pattern_hits = total_pattern_hits;
+  result.mtd_iterations = total_mtd_iterations;
   result.goal_cutoffs = total_goal_cutoffs;
   result.goal = goal;
   result.trick_matrix = std::move(matrix);
@@ -1991,9 +1317,8 @@ auto format_result(const SingleDummyResult& result, bool show_info) -> std::stri
     out << "opposition_splits: " << result.opposition_split_evaluations << '\n';
     out << "alpha_beta_cutoffs: " << result.alpha_beta_cutoffs << '\n';
     out << "isomorphism_skipped: " << result.isomorphism_skipped_moves << '\n';
-    out << "transposition_hits: " << result.transposition_hits << '\n';
-    out << "transposition_bound_cutoffs: "
-        << result.transposition_bound_cutoffs << '\n';
+    out << "pattern_hits: " << result.pattern_hits << '\n';
+    out << "mtd_iterations: " << result.mtd_iterations << '\n';
     if (result.goal.has_value())
     {
       out << "goal_cutoffs: " << result.goal_cutoffs << '\n';

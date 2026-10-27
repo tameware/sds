@@ -6,6 +6,11 @@ remaining pool card to best advantage except cards in a suit they have already
 shown out of (follow-suit still applies while that suit remains and they are
 not void). The maximizing side plays to maximize against that defense.
 
+Search (MTD(f), shape/pattern bounds, relative-rank move collapse, heuristic
+ordering) is adapted from
+[macroxue/bridge-solver](https://github.com/macroxue/bridge-solver)
+(Apache-2.0 OR MIT) for SDS shared-pool positions.
+
 When `--known` and `--dummy` are bridge partners (N–S or E–W), this is classic
 declarer single-dummy: both named hands are visible and maximize; the other two
 seats share the available pool.
